@@ -73,6 +73,7 @@
     display: grid; place-items: center; cursor: pointer; padding: 0;
   }
   .icon-btn:hover { color: var(--ink); }
+  .icon-btn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
 
   /* ----------------------------------------------------------------- tiers */
   .tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
@@ -150,6 +151,14 @@
       Zip
     </div>
     <div class="spacer"></div>
+    <button class="icon-btn" id="soundBtn" title="Sound" aria-label="Sound">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 9v6h4l5 4V5L8 9H4z"></path>
+        <path id="soundWave" d="M16.5 8.5a5 5 0 0 1 0 7"></path>
+        <path id="soundMute" d="M17 9.5l4 5m0-5l-4 5" style="display:none"></path>
+      </svg>
+    </button>
     <button class="icon-btn" id="themeBtn" title="Theme" aria-label="Theme">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" stroke-linejoin="round"></path>
@@ -775,8 +784,64 @@
     puzzle: null, engine: null, path: [], inPath: null, nodes: [],
     startedAt: 0, elapsed: 0, running: false, solved: false, revealed: false,
     prefetched: null, prefetchFor: null, advanceTimer: 0,
-    session: { solved: 0, total: 0 }
+    session: { solved: 0, total: 0, streak: 0, bestStreak: 0 },
+    pops: [], sweep: null
   };
+
+  /*
+   * A little audio, built from oscillators so the page stays a single file with
+   * no assets. Steps click at a pitch that rises as the board fills, so a run
+   * has a shape you can hear; numbers ring brighter; a solve resolves. Kept
+   * quiet and short -- this plays hundreds of times a session.
+   */
+  var audio = { ctx: null, on: localStorage.getItem('zip.sound') !== 'off' };
+
+  function ensureAudio() {
+    if (audio.ctx || !audio.on) return;
+    var AC = (typeof window !== 'undefined') && (window.AudioContext || window.webkitAudioContext);
+    if (!AC) return;
+    try { audio.ctx = new AC(); } catch (e) { audio.ctx = null; }
+  }
+  function tone(freq, delay, dur, level, shape) {
+    if (!audio.ctx) return;
+    var t = audio.ctx.currentTime + delay;
+    var osc = audio.ctx.createOscillator(), gain = audio.ctx.createGain();
+    osc.type = shape || 'sine';
+    osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(level, t + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    osc.connect(gain); gain.connect(audio.ctx.destination);
+    osc.start(t); osc.stop(t + dur + 0.03);
+  }
+  function buzz(pattern) {
+    if (!audio.on) return;
+    if (typeof navigator !== 'undefined' && navigator.vibrate) {
+      try { navigator.vibrate(pattern); } catch (e) { /* not supported */ }
+    }
+  }
+  function soundStep(progress) {
+    if (!audio.on) return;
+    ensureAudio();
+    tone(280 * Math.pow(2, progress * 1.2), 0, 0.05, 0.028, 'sine');
+  }
+  function soundNumber(index) {
+    if (!audio.on) return;
+    ensureAudio();
+    var base = 523.25 * Math.pow(2, Math.min(index, 12) / 12);
+    tone(base, 0, 0.11, 0.045, 'triangle');
+    tone(base * 1.5, 0.045, 0.13, 0.022, 'sine');
+    buzz(8);
+  }
+  function soundWin(isBest) {
+    if (!audio.on) return;
+    ensureAudio();
+    var chord = isBest ? [0, 4, 7, 12, 16] : [0, 4, 7, 12];
+    for (var i = 0; i < chord.length; i++) {
+      tone(523.25 * Math.pow(2, chord[i] / 12), i * 0.07, 0.34, 0.045, 'triangle');
+    }
+    buzz([14, 46, 22]);
+  }
 
   // Live drag state: where the pointer is on the board, how far the line has
   // reached past the last committed cell, and the tail used to ease it home on
@@ -932,8 +997,41 @@
     state.path.push(cell);
     state.inPath[cell] = 1;
     startClock();
+    var number = state.engine.numAt[cell];
+    if (number) {
+      soundNumber(number - 1);
+      popNumber(number - 1);
+    } else {
+      soundStep(state.path.length / state.engine.n);
+    }
     render();
     checkWin();
+  }
+
+  // A reached number swells briefly -- the one bit of motion that confirms a
+  // milestone without asking you to look away from the line.
+  function popNumber(index) {
+    var nd = state.nodes[index];
+    if (nd) state.pops.push({ node: nd, start: performance.now() });
+  }
+
+  /*
+   * On a solve, a bright dash runs the length of the finished route once. It is
+   * a decorative overlay on top of the real line, so it cannot affect state --
+   * if the frames never run, nothing is lost.
+   */
+  function startSweep() {
+    var board = el('board'), trail = board.querySelector('#trail');
+    if (!trail) return;
+    var span = (state.path.length - 1) * U + 160;
+    var shine = node('polyline', {
+      id: 'shine', fill: 'none', stroke: 'var(--path-ink)', 'stroke-width': 22,
+      'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: 0.8,
+      points: trail.getAttribute('points'),
+      'stroke-dasharray': '80 ' + span, 'stroke-dashoffset': span
+    });
+    board.appendChild(shine);
+    state.sweep = { node: shine, start: performance.now(), span: span };
   }
 
   function pop() {
@@ -995,6 +1093,26 @@
       if (drag.settle.amount < 0.8) drag.settle = null;
       renderTrail();
     }
+    if (state.pops.length) {
+      var now = performance.now(), alive = [];
+      for (var i = 0; i < state.pops.length; i++) {
+        var pop = state.pops[i], k = (now - pop.start) / 240;
+        if (k >= 1) { pop.node.disc.setAttribute('r', 30); continue; }
+        pop.node.disc.setAttribute('r', 30 + 9 * Math.sin(Math.PI * k));
+        alive.push(pop);
+      }
+      state.pops = alive;
+    }
+    if (state.sweep) {
+      var done = (performance.now() - state.sweep.start) / 800;
+      if (done >= 1) {
+        if (state.sweep.node.parentNode) state.sweep.node.parentNode.removeChild(state.sweep.node);
+        state.sweep = null;
+      } else {
+        state.sweep.node.setAttribute('stroke-dashoffset', state.sweep.span * (1 - done));
+        state.sweep.node.setAttribute('opacity', 0.8 * (1 - done * done));
+      }
+    }
     requestAnimationFrame(tick);
   }
 
@@ -1005,9 +1123,9 @@
   }
   function showSession() {
     var s = state.session;
-    el('session').textContent = s.solved
-      ? s.solved + ' solved · avg ' + fmt(s.total / s.solved)
-      : 'no solves yet';
+    if (!s.solved) { el('session').textContent = 'no solves yet'; return; }
+    el('session').textContent = s.solved + ' solved · avg ' + fmt(s.total / s.solved) +
+      (s.streak >= 2 ? ' · streak ' + s.streak : '');
   }
 
   function recordBest() {
@@ -1018,7 +1136,11 @@
     showBest();
     state.session.solved++;
     state.session.total += state.elapsed;
+    state.session.streak++;
+    if (state.session.streak > state.session.bestStreak) state.session.bestStreak = state.session.streak;
     showSession();
+    soundWin(isBest);
+    startSweep();
     var sub = null;
     if (isFinite(prev)) sub = isBest ? 'beat ' + fmt(prev) : fmt(state.elapsed - prev) + ' off your best';
     setBanner((isBest ? 'New best · ' : 'Solved in ') + fmt(state.elapsed), 'good', sub);
@@ -1219,6 +1341,8 @@
     clearTimeout(state.advanceTimer);
     stopClock();
     state.revealed = true; state.solved = false;
+    state.session.streak = 0;
+    showSession();
     state.path = state.puzzle.solution.slice();
     state.inPath.fill(1);
     render();
@@ -1237,6 +1361,20 @@
     state.theme = state.theme === 'system' ? 'light' : state.theme === 'light' ? 'dark' : 'system';
     localStorage.setItem('zip.theme', state.theme);
     applyTheme();
+  };
+
+  function applySound() {
+    el('soundBtn').setAttribute('aria-pressed', String(audio.on));
+    el('soundBtn').setAttribute('title', audio.on ? 'Sound on' : 'Sound off');
+    var wave = document.getElementById('soundWave'), mute = document.getElementById('soundMute');
+    if (wave) wave.style.display = audio.on ? '' : 'none';
+    if (mute) mute.style.display = audio.on ? 'none' : '';
+  }
+  el('soundBtn').onclick = function () {
+    audio.on = !audio.on;
+    localStorage.setItem('zip.sound', audio.on ? 'on' : 'off');
+    applySound();
+    if (audio.on) { ensureAudio(); tone(660, 0, 0.09, 0.04, 'triangle'); }
   };
 
   function applyAuto() {
@@ -1268,6 +1406,7 @@
   });
 
   applyTheme();
+  applySound();
   applyAuto();
   showSession();
   tick();
@@ -1278,7 +1417,7 @@
   if (location.search.indexOf('test') >= 0) {
     window.__zip = {
       state: state, step: step, load: load, cellAt: cellAt,
-      newPuzzle: newPuzzle, restart: restart, U: U, PAD: PAD
+      newPuzzle: newPuzzle, restart: restart, U: U, PAD: PAD, audio: audio
     };
   }
 })();

@@ -116,6 +116,20 @@ A few things exist specifically for drilling speed:
   `localStorage`, and a finished solve reports how far off your best it was.
   A per-session **solve count and average** sits under the board.
 
+And some things purely because they make a run feel better:
+
+- **Sound**, synthesised from oscillators so the page still ships as one file
+  with no assets. Each step clicks at a pitch that rises as the board fills, so
+  a run has a shape you can hear; numbers ring brighter as you reach them; a
+  solve resolves into a chord, with an extra note on a personal best. It is
+  deliberately quiet and short — this plays hundreds of times a session — and
+  the speaker button mutes it for good.
+- **Haptics** on phones, on each number and on the solve.
+- A reached number **swells briefly**, and finishing sends a **bright dash
+  running the length of the completed route**. The sweep is a decorative overlay
+  on top of the real line, so it cannot affect state.
+- A **streak** counter for consecutive solves, which a reveal resets.
+
 Theme follows the system and can be pinned light or dark with the button in the
 header.
 

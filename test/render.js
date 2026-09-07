@@ -264,6 +264,59 @@ const POINTS = `
     await page.close();
   }
 
+  // --- the playful bits actually fire --------------------------------------
+  {
+    const page = await launch({ port: port++ });
+    await page.setup({ scheme: 'dark', width: 520, height: 900 });
+    await page.goto(URL);
+    await page.eval("window.__zip.load(Zip.generateDifficulty('easy', 8080)); return 1");
+    const pts = await page.eval(POINTS);
+
+    // Audio only starts on a user gesture; a real mouse press is one.
+    ok(await page.eval('return window.__zip.audio.on === true'), 'sound is not on by default');
+    ok(await page.eval('return window.__zip.audio.ctx === null'),
+       'an AudioContext was built before any gesture');
+    await page.mouse('mousePressed', pts[0].x, pts[0].y);
+    await page.mouse('mouseMoved', pts[1].x, pts[1].y);
+    ok(await page.eval('return !!window.__zip.audio.ctx'), 'no AudioContext after a real gesture');
+
+    // A number swells when reached, then returns to its resting size.
+    const numberAt = await page.eval(`
+      var z = window.__zip, sol = z.state.puzzle.solution, num = z.state.engine.numAt;
+      for (var i = 1; i < sol.length; i++) if (num[sol[i]]) return i;
+      return -1;`);
+    ok(numberAt > 0, 'no number found along the solution');
+    for (let i = 2; i <= numberAt; i++) await page.mouse('mouseMoved', pts[i].x, pts[i].y);
+    const swelled = await page.eval(`
+      var d = document.querySelectorAll('#board circle');
+      var m = 0; d.forEach(function (c) { var r = +c.getAttribute('r'); if (r > 30 && r < 37) m = Math.max(m, r); });
+      return m;`);
+    ok(swelled > 30, `no number swelled on arrival (largest disc ${swelled})`);
+    await sleep(400);
+    const rested = await page.eval(`
+      var m = 0; document.querySelectorAll('#board circle').forEach(function (c) {
+        var r = +c.getAttribute('r'); if (r > 30 && r < 37) m = Math.max(m, r); });
+      return m;`);
+    ok(rested === 0, `a number stayed swelled at r=${rested}`);
+
+    // Finish it: the win sweep should appear and then clean itself up.
+    for (let i = numberAt + 1; i < pts.length; i++) await page.mouse('mouseMoved', pts[i].x, pts[i].y);
+    await page.mouse('mouseReleased', pts[pts.length - 1].x, pts[pts.length - 1].y);
+    ok(await page.eval("return !!document.getElementById('shine')"), 'no win sweep drawn');
+    await sleep(1000);
+    ok(await page.eval("return !document.getElementById('shine')"), 'win sweep never cleaned up');
+    ok(page.consoleErrors.length === 0, `sound/animation errors: ${page.consoleErrors.join(' | ')}`);
+
+    // Muting persists and swaps the icon.
+    await page.eval("document.getElementById('soundBtn').click(); return 1");
+    ok(await page.eval("return localStorage.getItem('zip.sound') === 'off'"), 'mute not persisted');
+    ok(await page.eval("return document.getElementById('soundWave').style.display === 'none'"),
+       'muting did not swap the speaker icon');
+    ok(await page.eval("return document.getElementById('soundBtn').getAttribute('aria-pressed') === 'false'"),
+       'mute button state not reflected');
+    await page.close();
+  }
+
   console.log(failures === 0
     ? `render  ${checks} browser assertions, 0 failures`
     : `render  ${failures} FAILURES`);

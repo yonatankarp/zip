@@ -53,7 +53,8 @@ function makeDom() {
 
   const ids = ['clock', 'tiers', 'board', 'banner', 'bannerText', 'newBtn', 'restartBtn',
                'undoBtn', 'revealBtn', 'filled', 'total', 'tierStats', 'best',
-               'progressFill', 'themeBtn', 'autoBtn', 'session'];
+               'progressFill', 'themeBtn', 'autoBtn', 'session', 'soundBtn',
+               'soundWave', 'soundMute'];
   for (const id of ids) { const e = makeEl('div'); e.setAttribute('id', id); }
   const root = makeEl('html');
   root.removeAttribute = k => { delete root._attrs; };
