@@ -6,50 +6,75 @@
 <title>Zip</title>
 <meta name="description" content="A Zip clone with randomly generated, guaranteed-solvable puzzles in four difficulties.">
 <meta name="color-scheme" content="dark light">
-<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
-<meta name="theme-color" content="#f4f6fa" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0e1014" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f2f4f8" media="(prefers-color-scheme: light)">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1115'/%3E%3Cpath d='M9 9h14L9 23h14' stroke='%23f5b544' stroke-width='3.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e1014'/%3E%3Cpath d='M9 9h14L9 23h14' stroke='%23f5b544' stroke-width='3.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
+  /* Dark is the base palette; light is applied when the system asks for it, or
+     when the theme button pins it. Pinning dark wins over the media query. */
   :root {
-    --bg: #0f1115;
+    --bg: #0e1014;
     --panel: #171a21;
-    --line: #262b36;
-    --ink: #e8ecf4;
-    --dim: #8b93a5;
+    --board: #131720;
+    --line: #272d3a;
+    --ink: #e9edf5;
+    --dim: #868fa3;
     --accent: #f5b544;
-    --path: #3d7dff;
+    --accent-ink: #14161c;
+    --path: #4d8bff;
+    --path-ink: #ffffff;
+    --wall: #c2cbdd;
     --good: #35d07f;
-    --bad: #ff5f57;
-    --cell: #1c2029;
+    --bad: #ff6259;
+    --shadow: 0 14px 44px rgba(0, 0, 0, .5);
   }
   @media (prefers-color-scheme: light) {
-    :root {
-      --bg: #f4f6fa; --panel: #ffffff; --line: #dde2ec; --ink: #131722;
-      --dim: #6a7385; --cell: #eef1f7; --path: #2f6bff;
+    :root:not([data-theme="dark"]) {
+      --bg: #f2f4f8; --panel: #ffffff; --board: #ffffff; --line: #e0e5ef;
+      --ink: #121722; --dim: #6b7385; --accent: #f0a92c; --accent-ink: #221a05;
+      --path: #2f6bff; --wall: #2c3446; --shadow: 0 14px 40px rgba(20, 30, 60, .12);
     }
   }
+  :root[data-theme="light"] {
+    --bg: #f2f4f8; --panel: #ffffff; --board: #ffffff; --line: #e0e5ef;
+    --ink: #121722; --dim: #6b7385; --accent: #f0a92c; --accent-ink: #221a05;
+    --path: #2f6bff; --wall: #2c3446; --shadow: 0 14px 40px rgba(20, 30, 60, .12);
+  }
+
   * { box-sizing: border-box; }
+  html, body { overscroll-behavior: none; }
   body {
     margin: 0; background: var(--bg); color: var(--ink);
     font: 15px/1.45 ui-sans-serif, -apple-system, "SF Pro Text", Inter, system-ui, sans-serif;
     display: flex; flex-direction: column; align-items: center;
-    min-height: 100dvh; padding: 16px 14px 28px; gap: 14px;
-    -webkit-user-select: none; user-select: none;
+    min-height: 100dvh;
+    padding: max(14px, env(safe-area-inset-top)) 14px calc(18px + env(safe-area-inset-bottom));
+    gap: 13px; -webkit-user-select: none; user-select: none;
     -webkit-tap-highlight-color: transparent;
   }
-  .wrap { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 14px; }
+  .wrap { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 13px; }
 
-  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-  .brand { font-weight: 700; font-size: 20px; letter-spacing: 0.14em; }
-  .brand span { color: var(--accent); }
+  /* ---------------------------------------------------------------- header */
+  header { display: flex; align-items: center; gap: 10px; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 17px; letter-spacing: -.01em; }
+  .brand svg { display: block; }
+  .spacer { flex: 1; }
   .clock {
-    font: 600 26px/1 ui-monospace, "SF Mono", Menlo, monospace;
-    font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+    font: 650 25px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+    transition: color .2s;
   }
   .clock.done { color: var(--good); }
+  .icon-btn {
+    appearance: none; border: 1px solid var(--line); background: var(--panel);
+    color: var(--dim); width: 34px; height: 34px; border-radius: 9px;
+    display: grid; place-items: center; cursor: pointer; padding: 0;
+  }
+  .icon-btn:hover { color: var(--ink); }
 
+  /* ----------------------------------------------------------------- tiers */
   .tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
   .tier {
     appearance: none; border: 1px solid var(--line); background: var(--panel);
@@ -57,49 +82,79 @@
     font: 600 13px/1 inherit; transition: background .12s, color .12s, border-color .12s;
   }
   .tier:hover { color: var(--ink); }
-  .tier[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #14161c; }
+  .tier[aria-pressed="true"] {
+    background: var(--accent); border-color: var(--accent); color: var(--accent-ink);
+  }
 
+  /* ----------------------------------------------------------------- board */
   .boardwrap { position: relative; }
-  svg.board { width: 100%; height: auto; display: block; touch-action: none; cursor: pointer; }
-  svg.board.busy { opacity: .35; pointer-events: none; }
+  svg.board { width: 100%; height: auto; display: block; touch-action: none; cursor: crosshair; }
+  svg.board.busy { opacity: .3; pointer-events: none; }
+  .progress { height: 3px; border-radius: 3px; background: var(--line); overflow: hidden; }
+  .progress i { display: block; height: 100%; width: 0; background: var(--path); transition: width .12s linear; }
+  .progress i.done { background: var(--good); }
 
   .banner {
-    position: absolute; inset: auto 0 50% 0; transform: translateY(50%);
-    display: none; text-align: center; pointer-events: none;
+    position: absolute; inset: auto 0 12px 0; display: none; justify-content: center;
+    pointer-events: none;
   }
-  .banner.show { display: block; }
+  .banner.show { display: flex; }
   .banner b {
-    display: inline-block; background: var(--panel); border: 1px solid var(--line);
-    border-radius: 14px; padding: 14px 22px; font-size: 17px;
-    box-shadow: 0 12px 40px rgba(0,0,0,.4);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 13px 20px; font-size: 16px; text-align: center; box-shadow: var(--shadow);
   }
-  .banner b small { display: block; font-weight: 400; color: var(--dim); font-size: 13px; margin-top: 3px; }
+  .banner b small { display: block; font-weight: 400; color: var(--dim); font-size: 12.5px; margin-top: 3px; }
 
+  /* -------------------------------------------------------------- controls */
   .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
   .btn {
     appearance: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-    border-radius: 10px; padding: 11px 4px; cursor: pointer; font: 500 13px/1 inherit;
+    border-radius: 10px; padding: 12px 4px; cursor: pointer; font: 500 13px/1 inherit;
   }
   .btn:hover { border-color: var(--dim); }
   .btn:active { transform: translateY(1px); }
   .btn.primary { background: var(--path); border-color: var(--path); color: #fff; }
 
   .status {
-    display: flex; justify-content: space-between; gap: 10px;
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
     color: var(--dim); font-size: 12.5px; font-variant-numeric: tabular-nums;
   }
   .status b { color: var(--ink); font-weight: 600; }
-  .hint { color: var(--dim); font-size: 12px; text-align: center; }
+  .chip {
+    appearance: none; border: 1px solid var(--line); background: transparent; color: var(--dim);
+    border-radius: 999px; padding: 5px 11px; cursor: pointer; font: 500 12px/1 inherit;
+  }
+  .chip[aria-pressed="true"] { color: var(--ink); border-color: var(--dim); }
+  .chip .dot {
+    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--line); margin-right: 6px; vertical-align: 1px;
+  }
+  .chip[aria-pressed="true"] .dot { background: var(--good); }
+  .hint { color: var(--dim); font-size: 11.5px; text-align: center; line-height: 1.9; }
   kbd {
     font: 11px/1 ui-monospace, Menlo, monospace; border: 1px solid var(--line);
     border-bottom-width: 2px; border-radius: 4px; padding: 2px 5px; color: var(--ink);
   }
+  @media (max-width: 380px) { .hint { display: none; } }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
-    <div class="brand">Z<span>I</span>P</div>
+    <div class="brand">
+      <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="7" fill="var(--accent)"></rect>
+        <path d="M9 9h14L9 23h14" stroke="var(--accent-ink)" stroke-width="3.4" fill="none"
+              stroke-linecap="round" stroke-linejoin="round"></path>
+      </svg>
+      Zip
+    </div>
+    <div class="spacer"></div>
+    <button class="icon-btn" id="themeBtn" title="Theme" aria-label="Theme">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" stroke-linejoin="round"></path>
+      </svg>
+    </button>
     <div class="clock" id="clock">0:00.0</div>
   </header>
 
@@ -109,6 +164,7 @@
     <svg class="board" id="board" xmlns="http://www.w3.org/2000/svg"></svg>
     <div class="banner" id="banner"><b id="bannerText"></b></div>
   </div>
+  <div class="progress"><i id="progressFill"></i></div>
 
   <div class="controls">
     <button class="btn primary" id="newBtn">New</button>
@@ -118,16 +174,22 @@
   </div>
 
   <div class="status">
-    <div><b id="filled">0</b> / <span id="total">0</span> cells</div>
+    <div><b id="filled">0</b> / <span id="total">0</span></div>
     <div id="tierStats"></div>
     <div>best <b id="best">—</b></div>
   </div>
+  <div class="status">
+    <button class="chip" id="autoBtn" aria-pressed="true"><span class="dot"></span>Auto-next</button>
+    <div id="session">no solves yet</div>
+  </div>
   <div class="hint">
-    drag from <b>1</b> · <kbd>←↑↓→</kbd> move · <kbd>U</kbd> undo · <kbd>R</kbd> restart · <kbd>N</kbd> new
+    drag from <b>1</b> · <kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move ·
+    <kbd>U</kbd> undo · <kbd>R</kbd> restart · <kbd>N</kbd> new
   </div>
 </div>
-
+<!-- ===== engine: generation, solving, difficulty measurement ===== -->
 <script>
+
 /*
  * Zip engine: puzzle generation, uniqueness checking, difficulty measurement.
  *
@@ -708,9 +770,12 @@
 
   var state = {
     difficulty: localStorage.getItem('zip.difficulty') || 'medium',
-    puzzle: null, engine: null, path: [], inPath: null,
+    theme: localStorage.getItem('zip.theme') || 'system',
+    autoNext: localStorage.getItem('zip.autoNext') !== 'off',
+    puzzle: null, engine: null, path: [], inPath: null, nodes: [],
     startedAt: 0, elapsed: 0, running: false, solved: false, revealed: false,
-    prefetched: null, prefetchFor: null
+    prefetched: null, prefetchFor: null, advanceTimer: 0,
+    session: { solved: 0, total: 0 }
   };
 
   // ------------------------------------------------------------- rendering
@@ -724,74 +789,104 @@
   function cy(cell) { return (((cell / state.puzzle.cols) | 0) + 0.5) * U; }
 
   function drawStatic() {
-    var p = state.puzzle, svg = el('board');
+    var p = state.puzzle, svg = el('board'), i;
     svg.setAttribute('viewBox',
       -PAD + ' ' + -PAD + ' ' + (p.cols * U + 2 * PAD) + ' ' + (p.rows * U + 2 * PAD));
     svg.style.aspectRatio = (p.cols * U + 2 * PAD) + ' / ' + (p.rows * U + 2 * PAD);
     svg.innerHTML = '';
 
-    var cells = node('g', {});
-    for (var i = 0; i < p.rows * p.cols; i++) {
-      cells.appendChild(node('rect', {
-        x: (i % p.cols) * U + 2, y: ((i / p.cols) | 0) * U + 2,
-        width: U - 4, height: U - 4, rx: 10, fill: 'var(--cell)'
-      }));
-    }
-    svg.appendChild(cells);
-
-    // the drawn path sits above the cells but below numbers and walls
-    svg.appendChild(node('polyline', {
-      id: 'trail', fill: 'none', stroke: 'var(--path)', 'stroke-width': 30,
-      'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: 0.9, points: ''
+    // One board surface with interior rules, rather than a tray of loose tiles.
+    svg.appendChild(node('rect', {
+      x: 0, y: 0, width: p.cols * U, height: p.rows * U, rx: 14,
+      fill: 'var(--board)', stroke: 'var(--line)', 'stroke-width': 2
     }));
-    svg.appendChild(node('circle', { id: 'head', r: 0, fill: 'var(--path)' }));
+    var rules = node('g', { stroke: 'var(--line)', 'stroke-width': 1.5 });
+    for (i = 1; i < p.cols; i++) rules.appendChild(node('line', { x1: i * U, y1: 7, x2: i * U, y2: p.rows * U - 7 }));
+    for (i = 1; i < p.rows; i++) rules.appendChild(node('line', { x1: 7, y1: i * U, x2: p.cols * U - 7, y2: i * U }));
+    svg.appendChild(rules);
 
-    var walls = node('g', {});
-    p.walls.forEach(function (w) {
-      var a = w[0], b = w[1], x, y, x2, y2;
-      if (b - a === 1) {                                   // vertical wall
-        x = x2 = (b % p.cols) * U;
-        y = ((a / p.cols) | 0) * U + 4; y2 = y + U - 8;
-      } else {                                             // horizontal wall
-        y = y2 = ((b / p.cols) | 0) * U;
-        x = (a % p.cols) * U + 4; x2 = x + U - 8;
-      }
-      walls.appendChild(node('line', {
-        x1: x, y1: y, x2: x2, y2: y2, stroke: 'var(--ink)',
-        'stroke-width': 9, 'stroke-linecap': 'round'
-      }));
-    });
-    svg.appendChild(walls);
+    svg.appendChild(node('polyline', {
+      id: 'trail', fill: 'none', stroke: 'var(--path)', 'stroke-width': 26,
+      'stroke-linecap': 'round', 'stroke-linejoin': 'round', points: ''
+    }));
+    svg.appendChild(node('circle', { id: 'head', r: 0, fill: 'var(--board)' }));
 
+    // Numbers keep their nodes: as the path reaches them they recolour to match
+    // it, so the line reads as passing through instead of disappearing behind.
+    state.nodes = [];
     var nums = node('g', {});
     p.waypoints.forEach(function (cell, idx) {
-      nums.appendChild(node('circle', { cx: cx(cell), cy: cy(cell), r: 34, fill: 'var(--accent)' }));
-      var t = node('text', {
+      var ring = node('circle', {
+        cx: cx(cell), cy: cy(cell), r: 40, fill: 'none',
+        stroke: 'var(--ink)', 'stroke-width': 2.5, opacity: 0
+      });
+      var disc = node('circle', { cx: cx(cell), cy: cy(cell), r: 30, fill: 'var(--accent)' });
+      var text = node('text', {
         x: cx(cell), y: cy(cell), 'text-anchor': 'middle', 'dominant-baseline': 'central',
-        fill: '#14161c', 'font-size': 40, 'font-weight': 700,
+        fill: 'var(--accent-ink)', 'font-size': 38, 'font-weight': 700,
         'font-family': 'ui-sans-serif, system-ui, sans-serif'
       });
-      t.textContent = String(idx + 1);
-      nums.appendChild(t);
+      text.textContent = String(idx + 1);
+      nums.appendChild(ring); nums.appendChild(disc); nums.appendChild(text);
+      state.nodes.push({ ring: ring, disc: disc, text: text, cell: cell });
     });
     svg.appendChild(nums);
+
+    // Walls span the whole shared edge, so which two cells they separate is
+    // never in doubt -- short marks floating in a gutter read as decoration.
+    var walls = node('g', { stroke: 'var(--wall)', 'stroke-width': 9, 'stroke-linecap': 'round' });
+    p.walls.forEach(function (w) {
+      var a = w[0], b = w[1];
+      if (b - a === 1) {
+        var vx = (b % p.cols) * U, vy = ((a / p.cols) | 0) * U;
+        walls.appendChild(node('line', { x1: vx, y1: vy + 6, x2: vx, y2: vy + U - 6 }));
+      } else {
+        var hy = ((b / p.cols) | 0) * U, hx = (a % p.cols) * U;
+        walls.appendChild(node('line', { x1: hx + 6, y1: hy, x2: hx + U - 6, y2: hy }));
+      }
+    });
+    svg.appendChild(walls);
   }
 
-  function drawPath() {
-    var trail = el('board').querySelector('#trail');
-    var head = el('board').querySelector('#head');
+  function numbersTaken() {
+    var count = 0;
+    for (var i = 0; i < state.path.length; i++) {
+      if (state.engine.numAt[state.path[i]] !== 0) count++;
+    }
+    return count;
+  }
+
+  function render() {
+    var p = state.puzzle, board = el('board');
+    var trail = board.querySelector('#trail'), head = board.querySelector('#head');
     if (!trail) return;
+    var colour = state.solved ? 'var(--good)' : state.revealed ? 'var(--dim)' : 'var(--path)';
+
     trail.setAttribute('points', state.path.map(function (c) { return cx(c) + ',' + cy(c); }).join(' '));
-    trail.setAttribute('stroke', state.solved ? 'var(--good)' : state.revealed ? 'var(--dim)' : 'var(--path)');
+    trail.setAttribute('stroke', colour);
     if (state.path.length) {
-      head.setAttribute('cx', cx(state.path[state.path.length - 1]));
-      head.setAttribute('cy', cy(state.path[state.path.length - 1]));
-      head.setAttribute('r', 17);
-      head.setAttribute('fill', state.solved ? 'var(--good)' : 'var(--path)');
+      var h = state.path[state.path.length - 1];
+      head.setAttribute('cx', cx(h));
+      head.setAttribute('cy', cy(h));
+      head.setAttribute('r', 8);       // a dot inside the stroke marks where you are
+      head.setAttribute('fill', 'var(--board)');
     } else {
       head.setAttribute('r', 0);
     }
+
+    var taken = numbersTaken();
+    for (var i = 0; i < state.nodes.length; i++) {
+      var nd = state.nodes[i], visited = state.inPath[nd.cell];
+      nd.disc.setAttribute('fill', visited ? colour : 'var(--accent)');
+      nd.text.setAttribute('fill', visited ? 'var(--path-ink)' : 'var(--accent-ink)');
+      // Ring the number you are heading for next -- one less thing to scan for.
+      nd.ring.setAttribute('opacity', (i === taken && !state.solved && !state.revealed) ? 0.45 : 0);
+    }
+
     el('filled').textContent = state.path.length;
+    var bar = el('progressFill');
+    bar.style.width = (state.path.length / (p.rows * p.cols) * 100) + '%';
+    bar.classList.toggle('done', state.solved);
   }
 
   // --------------------------------------------------------------- moves
@@ -800,7 +895,7 @@
     state.path.push(cell);
     state.inPath[cell] = 1;
     startClock();
-    drawPath();
+    render();
     checkWin();
   }
 
@@ -809,7 +904,7 @@
     state.inPath[state.path.pop()] = 0;
     state.solved = false;
     setBanner(null);
-    drawPath();
+    render();
   }
 
   function step(cell) {
@@ -824,7 +919,7 @@
     var at = state.inPath[cell] ? state.path.indexOf(cell) : -1;
     if (at >= 0) {                            // tapped a cell already drawn: rewind to it
       while (state.path.length > at + 1) state.inPath[state.path.pop()] = 0;
-      state.solved = false; setBanner(null); drawPath();
+      state.solved = false; setBanner(null); render();
       return;
     }
     if (state.engine.canStep(state.path, state.inPath, cell)) push(cell);
@@ -835,7 +930,7 @@
     if (state.engine.validate(state.path)) {           // checked against the rules, not the stored path
       state.solved = true;
       stopClock();
-      drawPath();
+      render();
       recordBest();
     } else {
       setBanner('Every cell filled, but the path must end on the last number.', 'bad');
@@ -845,7 +940,7 @@
   // --------------------------------------------------------------- clock
 
   function fmt(ms) {
-    var s = ms / 1000;
+    var s = Math.max(0, ms) / 1000;
     return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0') + '.' + Math.floor((s * 10) % 10);
   }
   function startClock() {
@@ -866,14 +961,26 @@
     var v = localStorage.getItem(bestKey());
     el('best').textContent = v ? fmt(Number(v)) : '—';
   }
+  function showSession() {
+    var s = state.session;
+    el('session').textContent = s.solved
+      ? s.solved + ' solved · avg ' + fmt(s.total / s.solved)
+      : 'no solves yet';
+  }
+
   function recordBest() {
-    if (state.revealed) { setBanner('Solved (revealed) in ' + fmt(state.elapsed), 'good'); return; }
+    if (state.revealed) return;
     var prev = Number(localStorage.getItem(bestKey()) || Infinity);
     var isBest = state.elapsed < prev;
     if (isBest) localStorage.setItem(bestKey(), String(Math.round(state.elapsed)));
     showBest();
-    setBanner((isBest ? 'New best · ' : 'Solved in ') + fmt(state.elapsed),
-              'good', isBest && isFinite(prev) ? 'beat ' + fmt(prev) : null);
+    state.session.solved++;
+    state.session.total += state.elapsed;
+    showSession();
+    var sub = null;
+    if (isFinite(prev)) sub = isBest ? 'beat ' + fmt(prev) : fmt(state.elapsed - prev) + ' off your best';
+    setBanner((isBest ? 'New best · ' : 'Solved in ') + fmt(state.elapsed), 'good', sub);
+    if (state.autoNext) state.advanceTimer = setTimeout(newPuzzle, 1800);
   }
 
   function setBanner(text, kind, sub) {
@@ -904,14 +1011,16 @@
     state.elapsed = 0; state.running = false; state.solved = false; state.revealed = false;
     setBanner(null);
     drawStatic();
-    drawPath();
+    render();
     el('total').textContent = puzzle.rows * puzzle.cols;
-    el('tierStats').textContent = puzzle.rows + '×' + puzzle.cols + ' · ' +
-      puzzle.stats.guesses + ' decision points';
+    el('tierStats').textContent =
+      Zip.DIFFICULTIES[puzzle.difficulty || state.difficulty].label + ' · ' + puzzle.rows + '×' + puzzle.cols;
     showBest();
+    showSession();
   }
 
   function newPuzzle() {
+    clearTimeout(state.advanceTimer);
     var board = el('board');
     var ready = (state.prefetchFor === state.difficulty) ? state.prefetched : null;
     state.prefetched = null; state.prefetchFor = null;
@@ -925,6 +1034,15 @@
       if (p) load(p);
       prefetch();
     }, 16);
+  }
+
+  function restart() {
+    clearTimeout(state.advanceTimer);
+    state.path = [];
+    state.inPath.fill(0);
+    state.elapsed = 0; state.running = false; state.solved = false; state.revealed = false;
+    setBanner(null);
+    render();
   }
 
   // ---------------------------------------------------------------- input
@@ -985,24 +1103,41 @@
     else if (k === 'n') newPuzzle();
   });
 
-  function restart() {
-    state.path = [];
-    state.inPath.fill(0);
-    state.elapsed = 0; state.running = false; state.solved = false; state.revealed = false;
-    setBanner(null);
-    drawPath();
-  }
-
   el('newBtn').onclick = newPuzzle;
   el('restartBtn').onclick = restart;
   el('undoBtn').onclick = pop;
   el('revealBtn').onclick = function () {
+    clearTimeout(state.advanceTimer);
     stopClock();
     state.revealed = true; state.solved = false;
     state.path = state.puzzle.solution.slice();
     state.inPath.fill(1);
-    drawPath();
+    render();
     setBanner('Revealed', 'bad');
+  };
+
+  // --------------------------------------------------------------- prefs
+
+  function applyTheme() {
+    var root = document.documentElement;
+    if (state.theme === 'system') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', state.theme);
+    el('themeBtn').setAttribute('title', 'Theme: ' + state.theme);
+  }
+  el('themeBtn').onclick = function () {
+    state.theme = state.theme === 'system' ? 'light' : state.theme === 'light' ? 'dark' : 'system';
+    localStorage.setItem('zip.theme', state.theme);
+    applyTheme();
+  };
+
+  function applyAuto() {
+    el('autoBtn').setAttribute('aria-pressed', String(state.autoNext));
+  }
+  el('autoBtn').onclick = function () {
+    state.autoNext = !state.autoNext;
+    localStorage.setItem('zip.autoNext', state.autoNext ? 'on' : 'off');
+    if (!state.autoNext) clearTimeout(state.advanceTimer);
+    applyAuto();
   };
 
   // ---------------------------------------------------------------- boot
@@ -1023,8 +1158,20 @@
     el('tiers').appendChild(b);
   });
 
+  applyTheme();
+  applyAuto();
+  showSession();
   tick();
   newPuzzle();
+
+  // Test hook. Only present when the page is opened with ?test, so the render
+  // tests can drive a known puzzle instead of whatever was generated.
+  if (location.search.indexOf('test') >= 0) {
+    window.__zip = {
+      state: state, step: step, load: load, cellAt: cellAt,
+      newPuzzle: newPuzzle, restart: restart, U: U, PAD: PAD
+    };
+  }
 })();
 </script>
 </body>

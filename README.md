@@ -11,7 +11,8 @@ open index.html        # play locally
 ./test/all.sh          # everything below
 node test/verify.js    # 500 generated puzzles per tier, all invariants
 node test/play.js      # interaction rules
-node test/ui.js        # the real UI, driven through its own pointer handlers
+node test/ui.js        # the UI under a DOM stub, driven through its own handlers
+node test/render.js    # the page in real headless Chrome, driven by real input
 ```
 
 ## Deploying to GitHub Pages
@@ -88,12 +89,28 @@ Three checks, cheapest first:
 - **Degree** — every remaining cell needs two open sides to be passed through
   (one if it is where the path terminates).
 
-## Controls
+## Playing
 
 Drag from **1**. Dragging back over the previous cell undoes that step; tapping
 any cell already on the path rewinds to it. Arrow keys move the head,
 <kbd>U</kbd> undoes, <kbd>R</kbd> restarts, <kbd>N</kbd> generates a new puzzle.
-Best time per difficulty is kept in `localStorage`.
+
+A few things exist specifically for drilling speed:
+
+- **Auto-next** loads the next puzzle 1.8 s after a solve, so a session is a
+  continuous run rather than a click between every rep. Toggle it off if you
+  would rather study the finished board.
+- The **next number you are heading for is ringed**, so you are not re-scanning
+  the grid for it between every segment.
+- Numbers **recolour to the path** as you pass through them, so the line reads as
+  continuous instead of vanishing behind a disc, and progress is visible at a
+  glance.
+- The solve is timed to a tenth, the **best time per difficulty** persists in
+  `localStorage`, and a finished solve reports how far off your best it was.
+  A per-session **solve count and average** sits under the board.
+
+Theme follows the system and can be pinned light or dark with the button in the
+header.
 
 ## Layout
 
@@ -103,8 +120,10 @@ index.html     the entire game: engine + UI, two inline scripts
 test/load.js   pulls the inline scripts out of index.html for the tests
 test/verify.js generator invariants: legality, uniqueness, difficulty band
 test/play.js   interaction rules: start, walls, number order, revisits
-test/ui.js     the page itself under a DOM stub: hit testing, drag, keys, win
-test/all.sh    runs all three
+test/ui.js     the page under a DOM stub: hit testing, drag, keys, win
+test/browser.js  a ~120-line CDP driver: launch, emulate, input, screenshot
+test/render.js real headless Chrome: renders in both themes, real mouse input
+test/all.sh    runs all four
 ```
 
 The first inline script is the engine — generation, solving and difficulty
@@ -118,6 +137,13 @@ derived from the SVG viewBox, so hit testing, rendering, the timer and the win
 path all actually execute. Drags are replayed aiming at cell centres *and* 2%
 inside each corner — the corner aims are the ones that would catch a hit test
 that mis-registers against the board's padding.
+
+`test/render.js` covers what a stub cannot: it drives real headless Chrome over
+the DevTools protocol (no Puppeteer — `test/browser.js` is a small dependency-free
+driver built on Node's built-in `WebSocket`), checks the page renders without
+console errors in both colour schemes and never scrolls horizontally, then solves
+a puzzle with genuine mouse input and waits for auto-next to advance the board.
+It skips itself if Chrome is not installed.
 
 Move legality during play comes from `engine.canStep()` — the UI does not
 restate the rules — and a finished solve is checked with `engine.validate()`

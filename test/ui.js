@@ -52,9 +52,13 @@ function makeDom() {
   }
 
   const ids = ['clock', 'tiers', 'board', 'banner', 'bannerText', 'newBtn', 'restartBtn',
-               'undoBtn', 'revealBtn', 'filled', 'total', 'tierStats', 'best'];
+               'undoBtn', 'revealBtn', 'filled', 'total', 'tierStats', 'best',
+               'progressFill', 'themeBtn', 'autoBtn', 'session'];
   for (const id of ids) { const e = makeEl('div'); e.setAttribute('id', id); }
+  const root = makeEl('html');
+  root.removeAttribute = k => { delete root._attrs; };
   const doc = {
+    documentElement: root,
     getElementById: id => byId.get(id) || null,
     createElement: makeEl,
     createElementNS: (ns, tag) => makeEl(tag),
@@ -65,19 +69,29 @@ function makeDom() {
   const store = new Map();
   const sandbox = {
     document: doc, console,
+    location: { search: '' },              // no ?test hook under the stub
     localStorage: {
       getItem: k => (store.has(k) ? store.get(k) : null),
       setItem: (k, v) => store.set(k, String(v))
     },
     performance: { now: () => sandbox.__clock },
     requestAnimationFrame: (fn) => { sandbox.__raf = fn; return 1; },
-    setTimeout: (fn) => { fn(); return 0; },
-    __clock: 0, __raf: null
+    // Short timers (paint deferral, prefetch) run inline. Long ones -- the
+    // auto-next delay -- are queued so a solve assertion is not raced by the
+    // next puzzle loading on top of it.
+    setTimeout: (fn, ms) => {
+      if ((ms || 0) < 1000) { fn(); return 0; }
+      sandbox.__timers.push(fn);
+      return sandbox.__timers.length;
+    },
+    clearTimeout: (id) => { if (id) sandbox.__timers[id - 1] = null; },
+    __clock: 0, __raf: null, __timers: []
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   // Run one animation frame, the way the browser would.
   sandbox.__pump = () => { const f = sandbox.__raf; sandbox.__raf = null; if (f) f(); };
+  sandbox.__flush = () => { const t = sandbox.__timers.splice(0); t.forEach(f => f && f()); };
   return { sandbox, byId, listeners, rect, doc };
 }
 
