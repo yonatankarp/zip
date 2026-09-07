@@ -102,6 +102,13 @@ A few things exist specifically for drilling speed:
   would rather study the finished board.
 - The **next number you are heading for is ringed**, so you are not re-scanning
   the grid for it between every segment.
+- The line **follows the pointer continuously** instead of advancing a cell at a
+  time. Cell-at-a-time drawing makes a fast drag feel like stamping segments;
+  here the line reaches up to half a cell past the last committed square — which
+  is exactly where the next square commits — so the handover is seamless in both
+  directions, and it eases home on release rather than snapping. Pushing at a
+  wall gives slightly, so a blocked direction feels like resistance rather than
+  a dead control.
 - Numbers **recolour to the path** as you pass through them, so the line reads as
   continuous instead of vanishing behind a disc, and progress is visible at a
   glance.
@@ -145,8 +152,13 @@ console errors in both colour schemes, that the layout never scrolls horizontall
 at any width from 320 px to 1024 px, and that the two routes to a light palette —
 the `prefers-color-scheme` block and the pinned `[data-theme="light"]` block —
 resolve to identical tokens, since those lists are declared twice and could
-otherwise drift. It then solves a puzzle with genuine mouse input and waits for
-auto-next to advance the board. It skips itself if Chrome is not installed.
+otherwise drift. It then solves a puzzle with genuine mouse input, waits for
+auto-next to advance the board, and measures the drawing itself: easing the
+pointer across one cell must move the tip of the line through many small
+positions rather than one jump (before the line followed the pointer it managed
+2 positions and a 100-unit jump; it now takes 13 with a largest step of 8), and a
+single fast event spanning a straight run must commit every cell under it. It
+skips itself if Chrome is not installed.
 
 Move legality during play comes from `engine.canStep()` — the UI does not
 restate the rules — and a finished solve is checked with `engine.validate()`

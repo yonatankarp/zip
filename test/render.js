@@ -163,6 +163,89 @@ const POINTS = `
     await page.close();
   }
 
+  // --- the line must follow the pointer, not jump a cell at a time ----------
+  // This is the property that makes dragging feel like drawing. Sample the tip
+  // of the drawn line while easing the pointer across one cell: it should take
+  // many distinct positions, in small increments, not two.
+  {
+    const page = await launch({ port: port++ });
+    await page.setup({ scheme: 'dark', width: 520, height: 900 });
+    await page.goto(URL);
+    await page.eval("window.__zip.load(Zip.generateDifficulty('easy', 5150)); return 1");
+    const pts = await page.eval(POINTS);
+    const TIP = `
+      var s = document.querySelector('#trail').getAttribute('points').trim().split(' ');
+      var last = s[s.length - 1].split(',');
+      return { x: parseFloat(last[0]), y: parseFloat(last[1]), vertices: s.length };`;
+
+    await page.mouse('mousePressed', pts[0].x, pts[0].y);
+    const seen = [];
+    const STEPS = 12;
+    for (let i = 0; i <= STEPS; i++) {
+      await page.mouse('mouseMoved',
+        pts[0].x + (pts[1].x - pts[0].x) * i / STEPS,
+        pts[0].y + (pts[1].y - pts[0].y) * i / STEPS);
+      seen.push(await page.eval(TIP));
+    }
+    await page.mouse('mouseReleased', pts[1].x, pts[1].y);
+
+    const distinct = new Set(seen.map(s => s.x.toFixed(2) + ',' + s.y.toFixed(2))).size;
+    let biggest = 0;
+    for (let i = 1; i < seen.length; i++) {
+      biggest = Math.max(biggest, Math.hypot(seen[i].x - seen[i - 1].x, seen[i].y - seen[i - 1].y));
+    }
+    // Cell centres are 100 viewBox units apart; a cell-at-a-time line gives 2
+    // distinct positions and a 100-unit jump.
+    ok(distinct >= 9, `line took only ${distinct} distinct positions crossing one cell (jumpy)`);
+    ok(biggest < 25, `line jumped ${biggest.toFixed(1)} viewBox units in one pointer move`);
+
+    // And releasing must ease the tip home rather than snap it.
+    const atRelease = await page.eval(TIP);
+    await sleep(400);
+    const settled = await page.eval(TIP);
+    ok(Math.abs(settled.x - Math.round(settled.x / 50) * 50) < 2 ||
+       Math.abs(settled.y - Math.round(settled.y / 50) * 50) < 2,
+       'tip did not settle onto the grid after release');
+    ok(atRelease.vertices >= 2, 'no line drawn before release');
+    await page.close();
+  }
+
+  // --- a fast flick along a straight run must not skip cells ----------------
+  // A pointer only ever travels the line between two events, so the meaningful
+  // case is a fast drag along a straight stretch of the solution: every cell
+  // under that line must be picked up, not just the endpoint.
+  {
+    const page = await launch({ port: port++ });
+    await page.setup({ scheme: 'dark', width: 520, height: 900 });
+    await page.goto(URL);
+    await page.eval("window.__zip.load(Zip.generateDifficulty('medium', 2468)); return 1");
+    const pts = await page.eval(POINTS);
+    // Longest straight stretch of the solution, as row/col indices.
+    const run = await page.eval(`
+      var s = window.__zip.state.puzzle, sol = s.solution, cols = s.cols;
+      var best = { start: 0, end: 0 }, start = 0;
+      for (var i = 1; i < sol.length; i++) {
+        var straight = i >= 2 &&
+          (sol[i] - sol[i - 1]) === (sol[i - 1] - sol[i - 2]);
+        if (!straight) start = i - 1;
+        if (i - start > best.end - best.start) best = { start: start, end: i };
+      }
+      return best;`);
+    ok(run.end - run.start >= 2, `no straight run found (got ${run.end - run.start})`);
+
+    await page.mouse('mousePressed', pts[0].x, pts[0].y);
+    for (let k = 1; k <= run.start; k++) await page.mouse('mouseMoved', pts[k].x, pts[k].y);
+    const before = await page.eval("return Number(document.getElementById('filled').textContent)");
+    // One single event spanning the whole straight run, as a flick produces.
+    await page.mouse('mouseMoved', pts[run.end].x, pts[run.end].y);
+    const after = await page.eval("return Number(document.getElementById('filled').textContent)");
+    await page.mouse('mouseReleased', pts[run.end].x, pts[run.end].y);
+    ok(before === run.start + 1, `setup drag reached ${before}, expected ${run.start + 1}`);
+    ok(after === run.end + 1,
+       `flick across ${run.end - run.start} cells committed ${after - before} of them`);
+    await page.close();
+  }
+
   // --- dragging back over the previous cell undoes that step ----------------
   {
     const page = await launch({ port: port++ });

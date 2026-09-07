@@ -778,6 +778,13 @@
     session: { solved: 0, total: 0 }
   };
 
+  // Live drag state: where the pointer is on the board, how far the line has
+  // reached past the last committed cell, and the tail used to ease it home on
+  // release. rectCache exists because reading the board rect on every
+  // pointermove forces a layout, which is its own source of stutter.
+  var drag = { active: false, at: null, tip: null, settle: null };
+  var rectCache = null;
+
   // ------------------------------------------------------------- rendering
 
   function node(name, attrs) {
@@ -856,25 +863,58 @@
     return count;
   }
 
-  function render() {
+  function lineColour() {
+    return state.solved ? 'var(--good)' : state.revealed ? 'var(--dim)' : 'var(--path)';
+  }
+
+  /*
+   * The line is the committed cells plus a live tip that follows the pointer
+   * inside the current cell. Without the tip the line can only advance a whole
+   * cell at a time, which is what made dragging feel like stamping segments
+   * instead of drawing one. The tip reaches at most half a cell, which is
+   * exactly where the next cell commits, so the handover is seamless going
+   * forwards and backwards.
+   */
+  function renderTrail() {
     var p = state.puzzle, board = el('board');
     var trail = board.querySelector('#trail'), head = board.querySelector('#head');
-    if (!trail) return;
-    var colour = state.solved ? 'var(--good)' : state.revealed ? 'var(--dim)' : 'var(--path)';
+    if (!trail || !p) return;
+    var tip = drag.tip || drag.settle;
+    var path = state.path, upto = path.length;
+    // While retracting, drop the head vertex: otherwise the stroke doubles back
+    // over itself and the line never looks like it is shortening.
+    if (tip && tip.retract && upto > 1) upto--;
 
-    trail.setAttribute('points', state.path.map(function (c) { return cx(c) + ',' + cy(c); }).join(' '));
-    trail.setAttribute('stroke', colour);
-    if (state.path.length) {
-      var h = state.path[state.path.length - 1];
-      head.setAttribute('cx', cx(h));
-      head.setAttribute('cy', cy(h));
+    var pts = [], i;
+    for (i = 0; i < upto; i++) pts.push(cx(path[i]) + ',' + cy(path[i]));
+    var tx, ty;
+    if (tip && path.length) {
+      var h = path[path.length - 1];
+      tx = cx(h) + tip.ux * tip.amount;
+      ty = cy(h) + tip.uy * tip.amount;
+      pts.push(tx + ',' + ty);
+    }
+    trail.setAttribute('points', pts.join(' '));
+    trail.setAttribute('stroke', lineColour());
+
+    if (path.length) {
+      var last = path[path.length - 1];
+      head.setAttribute('cx', tx == null ? cx(last) : tx);
+      head.setAttribute('cy', ty == null ? cy(last) : ty);
       head.setAttribute('r', 8);       // a dot inside the stroke marks where you are
       head.setAttribute('fill', 'var(--board)');
     } else {
       head.setAttribute('r', 0);
     }
 
-    var taken = numbersTaken();
+    el('filled').textContent = path.length;
+    var bar = el('progressFill');
+    bar.style.width = (path.length / (p.rows * p.cols) * 100) + '%';
+    bar.classList.toggle('done', state.solved);
+  }
+
+  function renderNumbers() {
+    var taken = numbersTaken(), colour = lineColour();
     for (var i = 0; i < state.nodes.length; i++) {
       var nd = state.nodes[i], visited = state.inPath[nd.cell];
       nd.disc.setAttribute('fill', visited ? colour : 'var(--accent)');
@@ -882,12 +922,9 @@
       // Ring the number you are heading for next -- one less thing to scan for.
       nd.ring.setAttribute('opacity', (i === taken && !state.solved && !state.revealed) ? 0.45 : 0);
     }
-
-    el('filled').textContent = state.path.length;
-    var bar = el('progressFill');
-    bar.style.width = (state.path.length / (p.rows * p.cols) * 100) + '%';
-    bar.classList.toggle('done', state.solved);
   }
+
+  function render() { renderTrail(); renderNumbers(); }
 
   // --------------------------------------------------------------- moves
 
@@ -953,6 +990,11 @@
     if (state.running) state.elapsed = performance.now() - state.startedAt;
     el('clock').textContent = fmt(state.elapsed);
     el('clock').classList.toggle('done', state.solved);
+    if (drag.settle) {                     // ease the tip back rather than snap
+      drag.settle.amount *= 0.6;
+      if (drag.settle.amount < 0.8) drag.settle = null;
+      renderTrail();
+    }
     requestAnimationFrame(tick);
   }
 
@@ -1009,6 +1051,8 @@
     state.path = [];
     state.inPath = new Uint8Array(puzzle.rows * puzzle.cols);
     state.elapsed = 0; state.running = false; state.solved = false; state.revealed = false;
+    drag.active = false; drag.tip = null; drag.settle = null; drag.at = null;
+    invalidateRect();
     setBanner(null);
     drawStatic();
     render();
@@ -1041,6 +1085,7 @@
     state.path = [];
     state.inPath.fill(0);
     state.elapsed = 0; state.running = false; state.solved = false; state.revealed = false;
+    drag.tip = null; drag.settle = null;
     setBanner(null);
     render();
   }
@@ -1048,43 +1093,107 @@
   // ---------------------------------------------------------------- input
 
   // The viewBox is inset by PAD on every side, so board pixels are not a plain
-  // division of the rect. Derive one scale from the width and use it for both
-  // axes -- the viewBox aspect matches the element's, so this stays exact.
-  function cellAt(clientX, clientY) {
-    var p = state.puzzle;
-    if (!p) return -1;
-    var r = el('board').getBoundingClientRect();
-    if (!r.width) return -1;
+  // division of the rect. One scale taken from the width serves both axes --
+  // the viewBox aspect matches the element's, so this stays exact.
+  function boardRect() {
+    if (!rectCache) rectCache = el('board').getBoundingClientRect();
+    return rectCache;
+  }
+  function invalidateRect() { rectCache = null; }
+
+  function toBoard(clientX, clientY) {
+    var p = state.puzzle, r = boardRect();
+    if (!p || !r || !r.width) return null;
     var scale = r.width / (p.cols * U + 2 * PAD);            // px per viewBox unit
-    var col = Math.floor(((clientX - r.left) / scale - PAD) / U);
-    var row = Math.floor(((clientY - r.top) / scale - PAD) / U);
+    return { x: (clientX - r.left) / scale - PAD, y: (clientY - r.top) / scale - PAD };
+  }
+
+  function cellAtBoard(v) {
+    var p = state.puzzle;
+    var col = Math.floor(v.x / U), row = Math.floor(v.y / U);
     if (col < 0 || row < 0 || col >= p.cols || row >= p.rows) return -1;
     return row * p.cols + col;
   }
 
-  var dragging = false;
+  function cellAt(clientX, clientY) {
+    var v = toBoard(clientX, clientY);
+    return v ? cellAtBoard(v) : -1;
+  }
+
+  // How far the line should reach past the last committed cell, given where the
+  // pointer is. Half a cell is the ceiling: at exactly half, the pointer has
+  // crossed into the next cell and that step commits.
+  function computeTip(v) {
+    if (!state.path.length || state.solved || state.revealed) return null;
+    var p = state.puzzle, head = state.path[state.path.length - 1];
+    var dx = v.x - cx(head), dy = v.y - cy(head);
+    var ux = 0, uy = 0, reach;
+    if (Math.abs(dx) >= Math.abs(dy)) { ux = dx < 0 ? -1 : 1; reach = Math.abs(dx); }
+    else { uy = dy < 0 ? -1 : 1; reach = Math.abs(dy); }
+    if (reach < 1) return null;
+    var col = (head % p.cols) + ux, row = ((head / p.cols) | 0) + uy;
+    if (col < 0 || row < 0 || col >= p.cols || row >= p.rows) return null;
+    var neighbour = row * p.cols + col;
+    var retract = state.path.length > 1 && neighbour === state.path[state.path.length - 2];
+    // A blocked direction still gives a little, so pushing at a wall feels like
+    // resistance rather than a dead control.
+    var limit = (retract || state.engine.canStep(state.path, state.inPath, neighbour))
+      ? U / 2 : U * 0.13;
+    return { ux: ux, uy: uy, amount: Math.min(reach, limit), retract: retract };
+  }
+
   var board = el('board');
   board.addEventListener('pointerdown', function (e) {
-    var c = cellAt(e.clientX, e.clientY);
+    invalidateRect();
+    var v = toBoard(e.clientX, e.clientY);
+    if (!v) return;
+    var c = cellAtBoard(v);
     if (c < 0) return;
-    dragging = true;
+    drag.active = true; drag.at = v; drag.settle = null;
     board.setPointerCapture(e.pointerId);
     step(c);
+    drag.tip = computeTip(v);
+    renderTrail();
     e.preventDefault();
   });
+
   board.addEventListener('pointermove', function (e) {
-    if (!dragging) return;
-    var c = cellAt(e.clientX, e.clientY);
-    if (c >= 0) step(c);
+    if (!drag.active) return;
+    var v = toBoard(e.clientX, e.clientY);
+    if (!v) return;
+    // Walk the segment travelled since the last event rather than sampling only
+    // its endpoint, so a fast drag cannot jump a cell and stall the line.
+    var from = drag.at || v;
+    var span = Math.hypot(v.x - from.x, v.y - from.y);
+    var samples = Math.min(32, Math.max(1, Math.ceil(span / (U * 0.34))));
+    for (var i = 1; i <= samples; i++) {
+      var c = cellAtBoard({
+        x: from.x + (v.x - from.x) * i / samples,
+        y: from.y + (v.y - from.y) * i / samples
+      });
+      if (c >= 0) step(c);
+    }
+    drag.at = v;
+    drag.tip = computeTip(v);
+    renderTrail();
   });
+
   function endDrag(e) {
-    dragging = false;
-    if (board.hasPointerCapture && e.pointerId != null && board.hasPointerCapture(e.pointerId)) {
+    if (!drag.active) return;
+    drag.active = false;
+    drag.settle = drag.tip;              // let the tip ease home instead of snapping
+    drag.tip = null;
+    drag.at = null;
+    if (board.hasPointerCapture && e && e.pointerId != null && board.hasPointerCapture(e.pointerId)) {
       board.releasePointerCapture(e.pointerId);
     }
   }
   board.addEventListener('pointerup', endDrag);
   board.addEventListener('pointercancel', endDrag);
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('resize', invalidateRect);
+    window.addEventListener('scroll', invalidateRect, true);
+  }
 
   var ARROWS = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
   document.addEventListener('keydown', function (e) {
