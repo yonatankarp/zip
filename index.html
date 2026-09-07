@@ -1,0 +1,1031 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Zip</title>
+<meta name="description" content="A Zip clone with randomly generated, guaranteed-solvable puzzles in four difficulties.">
+<meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0f1115" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f6fa" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f1115'/%3E%3Cpath d='M9 9h14L9 23h14' stroke='%23f5b544' stroke-width='3.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --line: #262b36;
+    --ink: #e8ecf4;
+    --dim: #8b93a5;
+    --accent: #f5b544;
+    --path: #3d7dff;
+    --good: #35d07f;
+    --bad: #ff5f57;
+    --cell: #1c2029;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f4f6fa; --panel: #ffffff; --line: #dde2ec; --ink: #131722;
+      --dim: #6a7385; --cell: #eef1f7; --path: #2f6bff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 ui-sans-serif, -apple-system, "SF Pro Text", Inter, system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100dvh; padding: 16px 14px 28px; gap: 14px;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .wrap { width: 100%; max-width: 520px; display: flex; flex-direction: column; gap: 14px; }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .brand { font-weight: 700; font-size: 20px; letter-spacing: 0.14em; }
+  .brand span { color: var(--accent); }
+  .clock {
+    font: 600 26px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.01em;
+  }
+  .clock.done { color: var(--good); }
+
+  .tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .tier {
+    appearance: none; border: 1px solid var(--line); background: var(--panel);
+    color: var(--dim); border-radius: 10px; padding: 9px 4px; cursor: pointer;
+    font: 600 13px/1 inherit; transition: background .12s, color .12s, border-color .12s;
+  }
+  .tier:hover { color: var(--ink); }
+  .tier[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #14161c; }
+
+  .boardwrap { position: relative; }
+  svg.board { width: 100%; height: auto; display: block; touch-action: none; cursor: pointer; }
+  svg.board.busy { opacity: .35; pointer-events: none; }
+
+  .banner {
+    position: absolute; inset: auto 0 50% 0; transform: translateY(50%);
+    display: none; text-align: center; pointer-events: none;
+  }
+  .banner.show { display: block; }
+  .banner b {
+    display: inline-block; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 14px; padding: 14px 22px; font-size: 17px;
+    box-shadow: 0 12px 40px rgba(0,0,0,.4);
+  }
+  .banner b small { display: block; font-weight: 400; color: var(--dim); font-size: 13px; margin-top: 3px; }
+
+  .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .btn {
+    appearance: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+    border-radius: 10px; padding: 11px 4px; cursor: pointer; font: 500 13px/1 inherit;
+  }
+  .btn:hover { border-color: var(--dim); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: var(--path); border-color: var(--path); color: #fff; }
+
+  .status {
+    display: flex; justify-content: space-between; gap: 10px;
+    color: var(--dim); font-size: 12.5px; font-variant-numeric: tabular-nums;
+  }
+  .status b { color: var(--ink); font-weight: 600; }
+  .hint { color: var(--dim); font-size: 12px; text-align: center; }
+  kbd {
+    font: 11px/1 ui-monospace, Menlo, monospace; border: 1px solid var(--line);
+    border-bottom-width: 2px; border-radius: 4px; padding: 2px 5px; color: var(--ink);
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">Z<span>I</span>P</div>
+    <div class="clock" id="clock">0:00.0</div>
+  </header>
+
+  <div class="tiers" id="tiers"></div>
+
+  <div class="boardwrap">
+    <svg class="board" id="board" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="banner" id="banner"><b id="bannerText"></b></div>
+  </div>
+
+  <div class="controls">
+    <button class="btn primary" id="newBtn">New</button>
+    <button class="btn" id="restartBtn">Restart</button>
+    <button class="btn" id="undoBtn">Undo</button>
+    <button class="btn" id="revealBtn">Reveal</button>
+  </div>
+
+  <div class="status">
+    <div><b id="filled">0</b> / <span id="total">0</span> cells</div>
+    <div id="tierStats"></div>
+    <div>best <b id="best">—</b></div>
+  </div>
+  <div class="hint">
+    drag from <b>1</b> · <kbd>←↑↓→</kbd> move · <kbd>U</kbd> undo · <kbd>R</kbd> restart · <kbd>N</kbd> new
+  </div>
+</div>
+
+<script>
+/*
+ * Zip engine: puzzle generation, uniqueness checking, difficulty measurement.
+ *
+ * A puzzle is a grid with numbered cells and walls. The solution is a single
+ * path that visits every cell exactly once, starts at number 1, ends at the
+ * highest number, hits the numbers in ascending order, and never crosses a wall.
+ *
+ * Puzzle shape:
+ *   { rows, cols, walls: [[a,b], ...], waypoints: [cell, ...], solution: [cell, ...] }
+ * Cells are indexed r * cols + c. Wall pairs are always [min, max].
+ */
+;(function (root, factory) {
+  var api = factory();
+  if (typeof module === 'object' && typeof module.exports === 'object') module.exports = api;
+  else root.Zip = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
+  'use strict';
+
+  // ---------------------------------------------------------------- random
+
+  function mulberry32(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function shuffle(arr, rng) {
+    for (var i = arr.length - 1; i > 0; i--) {
+      var j = (rng() * (i + 1)) | 0;
+      var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+    return arr;
+  }
+
+  // ------------------------------------------------------------------ grid
+
+  function gridNeighbors(rows, cols) {
+    var n = rows * cols, nbrs = new Array(n);
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        var i = r * cols + c, a = [];
+        if (r > 0) a.push(i - cols);
+        if (r < rows - 1) a.push(i + cols);
+        if (c > 0) a.push(i - 1);
+        if (c < cols - 1) a.push(i + 1);
+        nbrs[i] = a;
+      }
+    }
+    return nbrs;
+  }
+
+  function edgeKey(a, b) { return a < b ? a * 65536 + b : b * 65536 + a; }
+
+  // Adjacency with walled edges removed.
+  function buildAdjacency(rows, cols, walls) {
+    var base = gridNeighbors(rows, cols);
+    if (!walls || !walls.length) return base;
+    var blocked = new Set();
+    for (var w = 0; w < walls.length; w++) blocked.add(edgeKey(walls[w][0], walls[w][1]));
+    return base.map(function (list, i) {
+      return list.filter(function (j) { return !blocked.has(edgeKey(i, j)); });
+    });
+  }
+
+  // ------------------------------------------------------- path generation
+
+  // Snake path: row 0 left-to-right, row 1 right-to-left, ... Always valid.
+  function boustrophedon(rows, cols) {
+    var p = [];
+    for (var r = 0; r < rows; r++) {
+      for (var k = 0; k < cols; k++) {
+        var c = (r % 2 === 0) ? k : cols - 1 - k;
+        p.push(r * cols + c);
+      }
+    }
+    return p;
+  }
+
+  /*
+   * Backbite: sample a Hamiltonian path by repeatedly re-hinging an endpoint.
+   * Take the tail cell e, pick a random grid-neighbour u = p[i], then reverse
+   * p[i+1..end]. The added edge is u-e, the dropped edge is p[i]-p[i+1], so the
+   * result is always a valid Hamiltonian path -- the move can never fail.
+   * Mixes far better than random DFS, which hugs the boundary.
+   */
+  function backbite(rows, cols, rng, iterations) {
+    var n = rows * cols;
+    var nbrs = gridNeighbors(rows, cols);
+    var p = boustrophedon(rows, cols);
+    var pos = new Int32Array(n);
+    var i;
+    for (i = 0; i < n; i++) pos[p[i]] = i;
+    var iters = iterations || Math.max(2000, n * 120);
+    for (var t = 0; t < iters; t++) {
+      if (rng() < 0.5) {                       // work on the other endpoint
+        p.reverse();
+        for (i = 0; i < n; i++) pos[p[i]] = i;
+      }
+      var e = p[n - 1];
+      var cand = nbrs[e];
+      var u = cand[(rng() * cand.length) | 0];
+      var idx = pos[u];
+      if (idx >= n - 2) continue;              // no-op re-hinge
+      var lo = idx + 1, hi = n - 1;
+      while (lo < hi) {
+        var tmp = p[lo]; p[lo] = p[hi]; p[hi] = tmp;
+        pos[p[lo]] = lo; pos[p[hi]] = hi;
+        lo++; hi--;
+      }
+      if (lo === hi) pos[p[lo]] = lo;
+    }
+    return p;
+  }
+
+  // Walls only ever go on edges the solution does not use, so the intended
+  // path stays valid no matter how many we add.
+  function pickWalls(rows, cols, path, count, rng) {
+    if (count <= 0) return [];
+    var used = new Set();
+    for (var i = 0; i + 1 < path.length; i++) used.add(edgeKey(path[i], path[i + 1]));
+    var nbrs = gridNeighbors(rows, cols), free = [];
+    for (var a = 0; a < nbrs.length; a++) {
+      for (var k = 0; k < nbrs[a].length; k++) {
+        var b = nbrs[a][k];
+        if (a < b && !used.has(edgeKey(a, b))) free.push([a, b]);
+      }
+    }
+    shuffle(free, rng);
+    return free.slice(0, Math.min(count, free.length)).sort(function (x, y) {
+      return x[0] - y[0] || x[1] - y[1];
+    });
+  }
+
+  // Waypoint positions along the path. Always includes the two endpoints;
+  // minGap keeps consecutive numbers from landing on top of each other.
+  function pickWaypointIndices(n, k, rng, minGap) {
+    var gap = minGap || 2;
+    if (k < 2) k = 2;
+    if (k > n) k = n;
+    for (var attempt = 0; attempt < 60; attempt++) {
+      var pool = [];
+      for (var i = 1; i < n - 1; i++) pool.push(i);
+      shuffle(pool, rng);
+      var chosen = [0, n - 1];
+      for (var j = 0; j < pool.length && chosen.length < k; j++) {
+        var v = pool[j], ok = true;
+        for (var m = 0; m < chosen.length; m++) {
+          if (Math.abs(chosen[m] - v) < gap) { ok = false; break; }
+        }
+        if (ok) chosen.push(v);
+      }
+      if (chosen.length === k) return chosen.sort(function (x, y) { return x - y; });
+    }
+    return null;
+  }
+
+  // -------------------------------------------------------------- analysis
+
+  /*
+   * Shared machinery for the counting solver and the difficulty scorer.
+   * Everything is preallocated and mutated in place; the DFS never allocates.
+   */
+  function makeEngine(puzzle) {
+    var rows = puzzle.rows, cols = puzzle.cols, n = rows * cols;
+    var adj = buildAdjacency(rows, cols, puzzle.walls);
+    var wps = puzzle.waypoints, K = wps.length;
+    var target = wps[K - 1];
+
+    var numAt = new Int32Array(n);
+    for (var i = 0; i < K; i++) numAt[wps[i]] = i + 1;
+
+    var color = new Uint8Array(n);
+    for (var c = 0; c < n; c++) color[c] = (((c / cols) | 0) + (c % cols)) & 1;
+
+    var visited = new Uint8Array(n);
+    var freeByColor = new Int32Array(2);
+    var stack = new Int32Array(n);
+    var reachedList = new Int32Array(n);
+    var mark = new Int32Array(n);
+    var headAdj = new Int32Array(n);
+    var stamp = 0;
+
+    function reset() {
+      visited.fill(0);
+      freeByColor[0] = 0; freeByColor[1] = 0;
+      for (var j = 0; j < n; j++) freeByColor[color[j]]++;
+    }
+    function visit(cell) { visited[cell] = 1; freeByColor[color[cell]]--; }
+    function unvisit(cell) { visited[cell] = 0; freeByColor[color[cell]]++; }
+
+    /*
+     * Necessary conditions for the remaining unvisited cells to admit a
+     * Hamiltonian path from `head` to `target`. Cheap checks first.
+     */
+    function feasible(head, remaining) {
+      if (remaining === 0) return head === target;
+      if (visited[target]) return false;
+
+      // Parity: the remaining cells alternate colours starting opposite head,
+      // which pins both the colour counts and the colour of the final cell.
+      var other = color[head] ^ 1;
+      var wantOther = (remaining + 1) >> 1;
+      if (freeByColor[other] !== wantOther) return false;
+      if (freeByColor[color[head]] !== remaining - wantOther) return false;
+      if (color[target] !== (color[head] ^ (remaining & 1))) return false;
+
+      stamp++;
+      var s = stamp, k, w;
+      var ha = adj[head];
+      for (k = 0; k < ha.length; k++) headAdj[ha[k]] = s;
+
+      // Flood fill the unvisited region from head: everything must be reachable.
+      var sp = 0, reached = 0;
+      var a0 = adj[head];
+      for (k = 0; k < a0.length; k++) {
+        w = a0[k];
+        if (!visited[w] && mark[w] !== s) {
+          mark[w] = s; stack[sp++] = w; reachedList[reached++] = w;
+        }
+      }
+      if (sp === 0) return false;
+      while (sp > 0) {
+        var v = stack[--sp];
+        var av = adj[v];
+        for (k = 0; k < av.length; k++) {
+          w = av[k];
+          if (!visited[w] && mark[w] !== s) {
+            mark[w] = s; stack[sp++] = w; reachedList[reached++] = w;
+          }
+        }
+      }
+      if (reached !== remaining) return false;
+
+      // Degree: every remaining cell needs two open sides to be passed through
+      // (one if it is where the path terminates).
+      for (var r = 0; r < reached; r++) {
+        var cell = reachedList[r];
+        var deg = (headAdj[cell] === s) ? 1 : 0;
+        var ac = adj[cell];
+        for (k = 0; k < ac.length; k++) if (!visited[ac[k]]) deg++;
+        if (deg < (cell === target ? 1 : 2)) return false;
+      }
+      return true;
+    }
+
+    /*
+     * Is stepping onto `cell` legal given the path drawn so far? This is the
+     * single source of truth for the rules during play -- the UI must not
+     * restate them. `inPath` is a Uint8Array flag per cell.
+     */
+    function canStep(path, inPath, cell) {
+      if (cell < 0 || cell >= n) return false;
+      if (path.length === 0) return cell === wps[0];
+      if (inPath[cell]) return false;
+      var head = path[path.length - 1];
+      if (adj[head].indexOf(cell) === -1) return false;   // adjacent and not walled
+      var m = numAt[cell];
+      if (m === 0) return true;
+      var next = 1;
+      for (var i = 0; i < path.length; i++) if (numAt[path[i]] !== 0) next++;
+      return m === next;                                  // numbers in ascending order
+    }
+
+    // Legal single steps out of `head`, ignoring look-ahead.
+    function moves(head, nextWp, out) {
+      out.length = 0;
+      var ah = adj[head];
+      for (var k = 0; k < ah.length; k++) {
+        var w = ah[k];
+        if (visited[w]) continue;
+        var m = numAt[w];
+        if (m !== 0 && m !== nextWp) continue;   // numbers must be taken in order
+        out.push(w);
+      }
+      return out;
+    }
+
+    // Enumerate solutions, stopping at `cap` (2 is enough to test uniqueness).
+    // Returns the actual paths so the generator can inspect a rival solution.
+    function findSolutions(cap) {
+      var limit = cap || 2;
+      reset();
+      var start = wps[0];
+      visit(start);
+      var found = [];
+      var cur = new Int32Array(n);
+      cur[0] = start;
+
+      function rec(head, count, nextWp) {
+        if (count === n) {
+          if (head === target && nextWp > K) found.push(Array.prototype.slice.call(cur));
+          return;
+        }
+        if (!feasible(head, n - count)) return;
+        var ah = adj[head];
+        for (var k = 0; k < ah.length; k++) {
+          var w = ah[k];
+          if (visited[w]) continue;
+          var m = numAt[w];
+          if (m !== 0 && m !== nextWp) continue;
+          visit(w);
+          cur[count] = w;
+          rec(w, count + 1, m !== 0 ? nextWp + 1 : nextWp);
+          unvisit(w);
+          if (found.length >= limit) return;
+        }
+      }
+      rec(start, 1, 2);
+      return found;
+    }
+
+    function countSolutions(cap) { return findSolutions(cap).length; }
+
+    /*
+     * Walk the intended solution and count how often a solver is genuinely
+     * stuck for a choice. `guesses` applies full look-ahead (connectivity,
+     * dead ends, parity) -- a strong solver. `shallowGuesses` applies only the
+     * immediate rules. Real difficulty sits between the two; guesses is the
+     * stable one to band on.
+     */
+    function analyze(solution) {
+      reset();
+      var buf = [];
+      var head = solution[0];
+      visit(head);
+      var nextWp = 2;
+      var guesses = 0, shallowGuesses = 0, branchSum = 0, maxBranch = 0;
+      var guessAt = [];
+      var forcedRun = 0, longestForcedRun = 0;
+
+      for (var t = 0; t + 1 < n; t++) {
+        head = solution[t];
+        var legal = moves(head, nextWp, buf).slice();
+        if (legal.length > 1) shallowGuesses++;
+
+        var strong = [];
+        for (var k = 0; k < legal.length; k++) {
+          var w = legal[k];
+          visit(w);
+          if (feasible(w, n - (t + 2))) strong.push(w);
+          unvisit(w);
+        }
+        if (strong.length > 1) {
+          guesses++;
+          branchSum += strong.length - 1;
+          if (strong.length > maxBranch) maxBranch = strong.length;
+          guessAt.push(t);
+          if (forcedRun > longestForcedRun) longestForcedRun = forcedRun;
+          forcedRun = 0;
+        } else {
+          forcedRun++;
+        }
+
+        var nxt = solution[t + 1];
+        visit(nxt);
+        if (numAt[nxt] !== 0) nextWp++;
+      }
+      if (forcedRun > longestForcedRun) longestForcedRun = forcedRun;
+
+      return {
+        guesses: guesses,
+        shallowGuesses: shallowGuesses,
+        branchSum: branchSum,
+        maxBranch: maxBranch,
+        longestForcedRun: longestForcedRun,
+        guessAt: guessAt
+      };
+    }
+
+    // Structural check of an arbitrary path against the rules -- used to
+    // validate the player's solve without trusting the stored solution.
+    function validate(path) {
+      if (!path || path.length !== n) return false;
+      var seen = new Uint8Array(n);
+      for (var i = 0; i < n; i++) {
+        var cell = path[i];
+        if (cell < 0 || cell >= n || seen[cell]) return false;
+        seen[cell] = 1;
+        if (i > 0 && adj[path[i - 1]].indexOf(cell) === -1) return false;
+      }
+      var expect = 1;
+      for (var j = 0; j < n; j++) {
+        var m = numAt[path[j]];
+        if (m !== 0) {
+          if (m !== expect) return false;
+          expect++;
+        }
+      }
+      return expect === K + 1 && path[0] === wps[0] && path[n - 1] === target;
+    }
+
+    return {
+      n: n, adj: adj, numAt: numAt, target: target,
+      countSolutions: countSolutions, findSolutions: findSolutions,
+      analyze: analyze, validate: validate, canStep: canStep
+    };
+  }
+
+  // ------------------------------------------------------------ generation
+
+  /*
+   * Generate by refinement rather than by luck.
+   *
+   * Sample a path, then repeatedly ask "is this puzzle ambiguous?". If a rival
+   * solution exists it must use some edge the intended path does not -- walling
+   * that edge kills the rival and cannot touch the intended path. Walls are the
+   * cheap constraint, so they go in first; numbers are added only once the wall
+   * budget runs out, or to pull an over-hard puzzle back into its band.
+   */
+  function refine(path, rows, cols, rng, cfg) {
+    var n = rows * cols;
+    var wpIdx = pickWaypointIndices(n, cfg.waypoints, rng, cfg.minGap);
+    if (!wpIdx) return null;
+    var used = new Set();
+    for (var i = 0; i + 1 < path.length; i++) used.add(edgeKey(path[i], path[i + 1]));
+
+    // Seed some walls before the first solve. They cost nothing (off-path edges
+    // can never invalidate the solution) and they shrink the search space a lot,
+    // which is what keeps generation fast on the larger grids.
+    var walls = pickWalls(rows, cols, path, Math.min(cfg.seedWalls, cfg.wallBudget), rng);
+
+    function addWaypoint() {
+      if (wpIdx.length >= cfg.maxWaypoints) return false;
+      var pool = [];
+      for (var j = 1; j < n - 1; j++) {
+        var ok = true;
+        for (var m = 0; m < wpIdx.length; m++) {
+          if (Math.abs(wpIdx[m] - j) < cfg.minGap) { ok = false; break; }
+        }
+        if (ok) pool.push(j);
+      }
+      if (!pool.length) return false;
+      wpIdx.push(pool[(rng() * pool.length) | 0]);
+      wpIdx.sort(function (a, b) { return a - b; });
+      return true;
+    }
+
+    function build() {
+      return {
+        rows: rows, cols: cols, walls: walls.slice(),
+        waypoints: wpIdx.map(function (i) { return path[i]; }),
+        solution: path.slice()
+      };
+    }
+
+    for (var step = 0; step < cfg.maxRefineSteps; step++) {
+      var puzzle = build();
+      var eng = makeEngine(puzzle);
+      var sols = eng.findSolutions(2);
+      if (sols.length === 0) return null;            // over-walled, shouldn't happen
+
+      if (sols.length > 1) {
+        // Pick the rival that isn't our intended path and wall one of its edges.
+        var rival = sols[0];
+        var same = true;
+        for (var q = 0; q < n; q++) if (rival[q] !== path[q]) { same = false; break; }
+        if (same) rival = sols[1];
+
+        var options = [];
+        for (var e = 0; e + 1 < rival.length; e++) {
+          var a = rival[e], b = rival[e + 1];
+          if (!used.has(edgeKey(a, b))) options.push(a < b ? [a, b] : [b, a]);
+        }
+        if (walls.length < cfg.wallBudget && options.length) {
+          walls.push(options[(rng() * options.length) | 0]);
+          walls.sort(function (x, y) { return x[0] - y[0] || x[1] - y[1]; });
+          continue;
+        }
+        if (addWaypoint()) continue;
+        return null;                                  // out of levers
+      }
+
+      var stats = eng.analyze(path);
+      if (stats.guesses > cfg.maxGuesses) {
+        // More numbers is the only thing that reliably makes a puzzle easier.
+        if (addWaypoint()) continue;
+        return null;
+      }
+      if (stats.guesses < cfg.minGuesses) return null; // this path is too tame
+      puzzle.stats = stats;
+      puzzle.stats.waypointCount = wpIdx.length;
+      puzzle.stats.wallCount = walls.length;
+      puzzle.stats.refineSteps = step;
+      return puzzle;
+    }
+    return null;
+  }
+
+  function generate(opts) {
+    var o = opts || {};
+    var rows = o.rows || 6, cols = o.cols || 6;
+    var rng = o.rng || mulberry32((Math.random() * 4294967296) >>> 0);
+    var cfg = {
+      waypoints: o.waypoints || 4,
+      maxWaypoints: o.maxWaypoints || 10,
+      wallBudget: o.wallBudget == null ? 8 : o.wallBudget,
+      minGuesses: o.minGuesses == null ? 0 : o.minGuesses,
+      maxGuesses: o.maxGuesses == null ? Infinity : o.maxGuesses,
+      minGap: o.minGap || 2,
+      seedWalls: o.seedWalls == null ? Math.round((o.wallBudget == null ? 8 : o.wallBudget) * 0.6) : o.seedWalls,
+      maxRefineSteps: o.maxRefineSteps || 40
+    };
+    var maxAttempts = o.maxAttempts || 300;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      var path = backbite(rows, cols, rng, o.mixIterations);
+      var puzzle = refine(path, rows, cols, rng, cfg);
+      if (puzzle) {
+        puzzle.stats.attempts = attempt + 1;
+        return puzzle;
+      }
+    }
+    return null;
+  }
+
+  // ----------------------------------------------------------------- tiers
+
+  // Bands are calibrated in test/calibrate.js against measured guess counts.
+  var DIFFICULTIES = {
+    easy: {
+      label: 'Easy', rows: 5, cols: 5, wallBudget: 4,
+      waypoints: 4, maxWaypoints: 10, minGuesses: 0, maxGuesses: 2
+    },
+    medium: {
+      label: 'Medium', rows: 6, cols: 6, wallBudget: 6,
+      waypoints: 4, maxWaypoints: 9, minGuesses: 3, maxGuesses: 6
+    },
+    hard: {
+      label: 'Hard', rows: 7, cols: 7, wallBudget: 10,
+      waypoints: 4, maxWaypoints: 8, minGuesses: 7, maxGuesses: 11
+    },
+    expert: {
+      label: 'Expert', rows: 8, cols: 8, wallBudget: 18,
+      waypoints: 4, maxWaypoints: 9, minGuesses: 12, maxGuesses: Infinity
+    }
+  };
+  var DIFFICULTY_ORDER = ['easy', 'medium', 'hard', 'expert'];
+
+  function generateDifficulty(name, seed) {
+    var preset = DIFFICULTIES[name] || DIFFICULTIES.medium;
+    var opts = {};
+    for (var key in preset) opts[key] = preset[key];
+    opts.rng = mulberry32(seed == null ? (Math.random() * 4294967296) >>> 0 : seed);
+    var puzzle = generate(opts);
+    if (puzzle) puzzle.difficulty = name;
+    return puzzle;
+  }
+
+  return {
+    mulberry32: mulberry32,
+    gridNeighbors: gridNeighbors,
+    buildAdjacency: buildAdjacency,
+    backbite: backbite,
+    pickWalls: pickWalls,
+    pickWaypointIndices: pickWaypointIndices,
+    makeEngine: makeEngine,
+    refine: refine,
+    generate: generate,
+    generateDifficulty: generateDifficulty,
+    DIFFICULTIES: DIFFICULTIES,
+    DIFFICULTY_ORDER: DIFFICULTY_ORDER
+  };
+});
+
+</script>
+<!-- ===== game: rendering, input, timing ===== -->
+<script>
+(function () {
+  'use strict';
+
+  var U = 100;                       // viewBox units per cell
+  var PAD = 6;                       // viewBox inset, so strokes are not clipped
+  var el = function (id) { return document.getElementById(id); };
+  var SVG = 'http://www.w3.org/2000/svg';
+
+  var state = {
+    difficulty: localStorage.getItem('zip.difficulty') || 'medium',
+    puzzle: null, engine: null, path: [], inPath: null,
+    startedAt: 0, elapsed: 0, running: false, solved: false, revealed: false,
+    prefetched: null, prefetchFor: null
+  };
+
+  // ------------------------------------------------------------- rendering
+
+  function node(name, attrs) {
+    var e = document.createElementNS(SVG, name);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  function cx(cell) { return ((cell % state.puzzle.cols) + 0.5) * U; }
+  function cy(cell) { return (((cell / state.puzzle.cols) | 0) + 0.5) * U; }
+
+  function drawStatic() {
+    var p = state.puzzle, svg = el('board');
+    svg.setAttribute('viewBox',
+      -PAD + ' ' + -PAD + ' ' + (p.cols * U + 2 * PAD) + ' ' + (p.rows * U + 2 * PAD));
+    svg.style.aspectRatio = (p.cols * U + 2 * PAD) + ' / ' + (p.rows * U + 2 * PAD);
+    svg.innerHTML = '';
+
+    var cells = node('g', {});
+    for (var i = 0; i < p.rows * p.cols; i++) {
+      cells.appendChild(node('rect', {
+        x: (i % p.cols) * U + 2, y: ((i / p.cols) | 0) * U + 2,
+        width: U - 4, height: U - 4, rx: 10, fill: 'var(--cell)'
+      }));
+    }
+    svg.appendChild(cells);
+
+    // the drawn path sits above the cells but below numbers and walls
+    svg.appendChild(node('polyline', {
+      id: 'trail', fill: 'none', stroke: 'var(--path)', 'stroke-width': 30,
+      'stroke-linecap': 'round', 'stroke-linejoin': 'round', opacity: 0.9, points: ''
+    }));
+    svg.appendChild(node('circle', { id: 'head', r: 0, fill: 'var(--path)' }));
+
+    var walls = node('g', {});
+    p.walls.forEach(function (w) {
+      var a = w[0], b = w[1], x, y, x2, y2;
+      if (b - a === 1) {                                   // vertical wall
+        x = x2 = (b % p.cols) * U;
+        y = ((a / p.cols) | 0) * U + 4; y2 = y + U - 8;
+      } else {                                             // horizontal wall
+        y = y2 = ((b / p.cols) | 0) * U;
+        x = (a % p.cols) * U + 4; x2 = x + U - 8;
+      }
+      walls.appendChild(node('line', {
+        x1: x, y1: y, x2: x2, y2: y2, stroke: 'var(--ink)',
+        'stroke-width': 9, 'stroke-linecap': 'round'
+      }));
+    });
+    svg.appendChild(walls);
+
+    var nums = node('g', {});
+    p.waypoints.forEach(function (cell, idx) {
+      nums.appendChild(node('circle', { cx: cx(cell), cy: cy(cell), r: 34, fill: 'var(--accent)' }));
+      var t = node('text', {
+        x: cx(cell), y: cy(cell), 'text-anchor': 'middle', 'dominant-baseline': 'central',
+        fill: '#14161c', 'font-size': 40, 'font-weight': 700,
+        'font-family': 'ui-sans-serif, system-ui, sans-serif'
+      });
+      t.textContent = String(idx + 1);
+      nums.appendChild(t);
+    });
+    svg.appendChild(nums);
+  }
+
+  function drawPath() {
+    var trail = el('board').querySelector('#trail');
+    var head = el('board').querySelector('#head');
+    if (!trail) return;
+    trail.setAttribute('points', state.path.map(function (c) { return cx(c) + ',' + cy(c); }).join(' '));
+    trail.setAttribute('stroke', state.solved ? 'var(--good)' : state.revealed ? 'var(--dim)' : 'var(--path)');
+    if (state.path.length) {
+      head.setAttribute('cx', cx(state.path[state.path.length - 1]));
+      head.setAttribute('cy', cy(state.path[state.path.length - 1]));
+      head.setAttribute('r', 17);
+      head.setAttribute('fill', state.solved ? 'var(--good)' : 'var(--path)');
+    } else {
+      head.setAttribute('r', 0);
+    }
+    el('filled').textContent = state.path.length;
+  }
+
+  // --------------------------------------------------------------- moves
+
+  function push(cell) {
+    state.path.push(cell);
+    state.inPath[cell] = 1;
+    startClock();
+    drawPath();
+    checkWin();
+  }
+
+  function pop() {
+    if (state.path.length <= 1) return;
+    state.inPath[state.path.pop()] = 0;
+    state.solved = false;
+    setBanner(null);
+    drawPath();
+  }
+
+  function step(cell) {
+    if (state.solved || state.revealed) return;
+    if (!state.path.length) {
+      if (state.engine.canStep(state.path, state.inPath, cell)) push(cell);
+      return;
+    }
+    var head = state.path[state.path.length - 1];
+    if (cell === head) return;
+    if (state.path.length > 1 && cell === state.path[state.path.length - 2]) { pop(); return; }
+    var at = state.inPath[cell] ? state.path.indexOf(cell) : -1;
+    if (at >= 0) {                            // tapped a cell already drawn: rewind to it
+      while (state.path.length > at + 1) state.inPath[state.path.pop()] = 0;
+      state.solved = false; setBanner(null); drawPath();
+      return;
+    }
+    if (state.engine.canStep(state.path, state.inPath, cell)) push(cell);
+  }
+
+  function checkWin() {
+    if (state.path.length !== state.engine.n) return;
+    if (state.engine.validate(state.path)) {           // checked against the rules, not the stored path
+      state.solved = true;
+      stopClock();
+      drawPath();
+      recordBest();
+    } else {
+      setBanner('Every cell filled, but the path must end on the last number.', 'bad');
+    }
+  }
+
+  // --------------------------------------------------------------- clock
+
+  function fmt(ms) {
+    var s = ms / 1000;
+    return Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0') + '.' + Math.floor((s * 10) % 10);
+  }
+  function startClock() {
+    if (state.running || state.solved) return;
+    state.running = true;
+    state.startedAt = performance.now() - state.elapsed;
+  }
+  function stopClock() { state.running = false; }
+  function tick() {
+    if (state.running) state.elapsed = performance.now() - state.startedAt;
+    el('clock').textContent = fmt(state.elapsed);
+    el('clock').classList.toggle('done', state.solved);
+    requestAnimationFrame(tick);
+  }
+
+  function bestKey() { return 'zip.best.' + state.difficulty; }
+  function showBest() {
+    var v = localStorage.getItem(bestKey());
+    el('best').textContent = v ? fmt(Number(v)) : '—';
+  }
+  function recordBest() {
+    if (state.revealed) { setBanner('Solved (revealed) in ' + fmt(state.elapsed), 'good'); return; }
+    var prev = Number(localStorage.getItem(bestKey()) || Infinity);
+    var isBest = state.elapsed < prev;
+    if (isBest) localStorage.setItem(bestKey(), String(Math.round(state.elapsed)));
+    showBest();
+    setBanner((isBest ? 'New best · ' : 'Solved in ') + fmt(state.elapsed),
+              'good', isBest && isFinite(prev) ? 'beat ' + fmt(prev) : null);
+  }
+
+  function setBanner(text, kind, sub) {
+    var b = el('banner');
+    if (!text) { b.classList.remove('show'); return; }
+    el('bannerText').innerHTML = text + (sub ? '<small>' + sub + '</small>' : '');
+    el('bannerText').style.color =
+      kind === 'bad' ? 'var(--bad)' : kind === 'wait' ? 'var(--dim)' : 'var(--good)';
+    b.classList.add('show');
+  }
+
+  // ------------------------------------------------------------- puzzles
+
+  function prefetch() {
+    var want = state.difficulty;
+    setTimeout(function () {
+      if (state.prefetchFor === want && state.prefetched) return;
+      var p = Zip.generateDifficulty(want);
+      if (p) { state.prefetched = p; state.prefetchFor = want; }
+    }, 250);
+  }
+
+  function load(puzzle) {
+    state.puzzle = puzzle;
+    state.engine = Zip.makeEngine(puzzle);
+    state.path = [];
+    state.inPath = new Uint8Array(puzzle.rows * puzzle.cols);
+    state.elapsed = 0; state.running = false; state.solved = false; state.revealed = false;
+    setBanner(null);
+    drawStatic();
+    drawPath();
+    el('total').textContent = puzzle.rows * puzzle.cols;
+    el('tierStats').textContent = puzzle.rows + '×' + puzzle.cols + ' · ' +
+      puzzle.stats.guesses + ' decision points';
+    showBest();
+  }
+
+  function newPuzzle() {
+    var board = el('board');
+    var ready = (state.prefetchFor === state.difficulty) ? state.prefetched : null;
+    state.prefetched = null; state.prefetchFor = null;
+    if (ready) { load(ready); prefetch(); return; }
+    board.classList.add('busy');
+    setBanner('Generating…', 'wait');
+    setTimeout(function () {                     // let the frame paint before we block
+      var p = Zip.generateDifficulty(state.difficulty);
+      board.classList.remove('busy');
+      setBanner(null);
+      if (p) load(p);
+      prefetch();
+    }, 16);
+  }
+
+  // ---------------------------------------------------------------- input
+
+  // The viewBox is inset by PAD on every side, so board pixels are not a plain
+  // division of the rect. Derive one scale from the width and use it for both
+  // axes -- the viewBox aspect matches the element's, so this stays exact.
+  function cellAt(clientX, clientY) {
+    var p = state.puzzle;
+    if (!p) return -1;
+    var r = el('board').getBoundingClientRect();
+    if (!r.width) return -1;
+    var scale = r.width / (p.cols * U + 2 * PAD);            // px per viewBox unit
+    var col = Math.floor(((clientX - r.left) / scale - PAD) / U);
+    var row = Math.floor(((clientY - r.top) / scale - PAD) / U);
+    if (col < 0 || row < 0 || col >= p.cols || row >= p.rows) return -1;
+    return row * p.cols + col;
+  }
+
+  var dragging = false;
+  var board = el('board');
+  board.addEventListener('pointerdown', function (e) {
+    var c = cellAt(e.clientX, e.clientY);
+    if (c < 0) return;
+    dragging = true;
+    board.setPointerCapture(e.pointerId);
+    step(c);
+    e.preventDefault();
+  });
+  board.addEventListener('pointermove', function (e) {
+    if (!dragging) return;
+    var c = cellAt(e.clientX, e.clientY);
+    if (c >= 0) step(c);
+  });
+  function endDrag(e) {
+    dragging = false;
+    if (board.hasPointerCapture && e.pointerId != null && board.hasPointerCapture(e.pointerId)) {
+      board.releasePointerCapture(e.pointerId);
+    }
+  }
+  board.addEventListener('pointerup', endDrag);
+  board.addEventListener('pointercancel', endDrag);
+
+  var ARROWS = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
+  document.addEventListener('keydown', function (e) {
+    if (ARROWS[e.key]) {
+      e.preventDefault();
+      if (!state.path.length) { step(state.puzzle.waypoints[0]); return; }
+      var head = state.path[state.path.length - 1], p = state.puzzle;
+      var row = (head / p.cols | 0) + ARROWS[e.key][0], col = (head % p.cols) + ARROWS[e.key][1];
+      if (row < 0 || col < 0 || row >= p.rows || col >= p.cols) return;
+      step(row * p.cols + col);
+      return;
+    }
+    var k = e.key.toLowerCase();
+    if (k === 'u' || e.key === 'Backspace') { e.preventDefault(); pop(); }
+    else if (k === 'r') restart();
+    else if (k === 'n') newPuzzle();
+  });
+
+  function restart() {
+    state.path = [];
+    state.inPath.fill(0);
+    state.elapsed = 0; state.running = false; state.solved = false; state.revealed = false;
+    setBanner(null);
+    drawPath();
+  }
+
+  el('newBtn').onclick = newPuzzle;
+  el('restartBtn').onclick = restart;
+  el('undoBtn').onclick = pop;
+  el('revealBtn').onclick = function () {
+    stopClock();
+    state.revealed = true; state.solved = false;
+    state.path = state.puzzle.solution.slice();
+    state.inPath.fill(1);
+    drawPath();
+    setBanner('Revealed', 'bad');
+  };
+
+  // ---------------------------------------------------------------- boot
+
+  Zip.DIFFICULTY_ORDER.forEach(function (name) {
+    var b = document.createElement('button');
+    b.className = 'tier';
+    b.textContent = Zip.DIFFICULTIES[name].label;
+    b.setAttribute('aria-pressed', String(name === state.difficulty));
+    b.onclick = function () {
+      state.difficulty = name;
+      localStorage.setItem('zip.difficulty', name);
+      Array.prototype.forEach.call(el('tiers').children, function (c) {
+        c.setAttribute('aria-pressed', String(c === b));
+      });
+      newPuzzle();
+    };
+    el('tiers').appendChild(b);
+  });
+
+  tick();
+  newPuzzle();
+})();
+</script>
+</body>
+</html>
