@@ -798,7 +798,8 @@
     theme: localStorage.getItem('zip.theme') || 'system',
     autoNext: localStorage.getItem('zip.autoNext') !== 'off',
     puzzle: null, engine: null, path: [], inPath: null, nodes: [],
-    startedAt: 0, elapsed: 0, running: false, solved: false, revealed: false,
+    startedAt: 0, elapsed: 0, running: false, timerStarted: false,
+    solved: false, revealed: false,
     prefetched: null, prefetchFor: null, advanceTimer: 0,
     session: { solved: 0, total: 0, streak: 0, bestStreak: 0 },
     pops: [], sweep: null, confetti: null, hint: null, hintsUsed: 0,
@@ -1182,6 +1183,7 @@
   function startClock() {
     if (state.running || state.solved) return;
     state.running = true;
+    state.timerStarted = true;
     state.startedAt = performance.now() - state.elapsed;
   }
   function stopClock() { state.running = false; }
@@ -1388,7 +1390,8 @@
     state.engine = Zip.makeEngine(puzzle);
     state.path = [];
     state.inPath = new Uint8Array(puzzle.rows * puzzle.cols);
-    state.elapsed = 0; state.running = false; state.solved = false; state.revealed = false;
+    state.elapsed = 0; state.running = false; state.timerStarted = false;
+    state.solved = false; state.revealed = false;
     drag.active = false; drag.tip = null; drag.settle = null; drag.at = null;
     clearHint();
     state.hintsUsed = 0;
@@ -1427,9 +1430,23 @@
     clearTimeout(state.advanceTimer);
     state.path = [];
     state.inPath.fill(0);
-    state.elapsed = 0; state.running = false; state.solved = false; state.revealed = false;
+    state.solved = false; state.revealed = false;
+    /*
+     * The clock belongs to the puzzle, not to the attempt. Clearing the board
+     * never clears the time -- otherwise a bad run could be wiped to protect a
+     * best -- and it resumes straight away rather than waiting for the first
+     * move, so hesitating after a restart costs what it should. Only a new
+     * puzzle starts a new clock.
+     */
+    if (state.timerStarted) {
+      state.running = true;
+      state.startedAt = performance.now() - state.elapsed;
+    }
     drag.tip = null; drag.settle = null;
     clearHint();
+    state.confetti = null;
+    if (el('fx')) el('fx').innerHTML = '';
+    el('board').classList.remove('won');
     setBanner(null);
     render();
   }

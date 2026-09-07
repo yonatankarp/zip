@@ -545,6 +545,52 @@ const POINTS = `
     await page.close();
   }
 
+  // --- the clock belongs to the puzzle, not the attempt ---------------------
+  // Restarting must not reset or pause it, or a run going badly could simply be
+  // wiped to protect a best time.
+  {
+    const page = await launch();
+    await page.setup({ scheme: 'dark', width: 520, height: 900 });
+    await page.goto(URL);
+    await page.eval("window.__zip.load(Zip.generateDifficulty('medium', 2727)); return 1");
+    const pts = await page.eval(POINTS);
+
+    await page.mouse('mousePressed', pts[0].x, pts[0].y);
+    for (let i = 1; i <= 6; i++) await page.mouse('mouseMoved', pts[i].x, pts[i].y);
+    await page.mouse('mouseReleased', pts[6].x, pts[6].y);
+    await sleep(500);
+    const running = await page.eval('return window.__zip.state.elapsed');
+    ok(running > 300, `clock only reached ${Math.round(running)}ms before the restart`);
+
+    await page.eval("document.getElementById('restartBtn').click(); return 1");
+    const kept = await page.eval('return window.__zip.state.elapsed');
+    const cleared = await page.eval("return Number(document.getElementById('filled').textContent)");
+    ok(cleared === 0, `restart left ${cleared} cells drawn`);
+    ok(kept >= running - 20, `restart reset the clock (${Math.round(running)}ms -> ${Math.round(kept)}ms)`);
+
+    // ...and it keeps ticking while the board sits empty.
+    await sleep(500);
+    const later = await page.eval('return window.__zip.state.elapsed');
+    ok(later > kept + 300, `clock stalled after the restart (${Math.round(kept)} -> ${Math.round(later)})`);
+    ok(!/^0:00\.[01]$/.test(await page.eval("return document.getElementById('clock').textContent")),
+       'the clock face went back to zero');
+
+    // Finishing from here must bank the whole elapsed time, restart included.
+    const pts2 = await page.eval(POINTS);
+    await page.drag(pts2);
+    await sleep(150);
+    const banked = Number(await page.eval("return localStorage.getItem('zip.best.medium')"));
+    ok(banked > later, `a restarted solve banked ${banked}ms, less than the ${Math.round(later)}ms already spent`);
+
+    // A new puzzle, though, does start a fresh clock.
+    await page.eval("document.getElementById('newBtn').click(); return 1");
+    const fresh = await page.eval('return window.__zip.state.elapsed');
+    ok(fresh < 100, `a new puzzle inherited ${Math.round(fresh)}ms`);
+    ok(await page.eval('return window.__zip.state.running === false'),
+       'a new puzzle started its clock before the first move');
+    await page.close();
+  }
+
   console.log(failures === 0
     ? `render  ${checks} browser assertions, 0 failures`
     : `render  ${failures} FAILURES`);

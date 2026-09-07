@@ -120,6 +120,10 @@ A few things exist specifically for drilling speed:
   glance.
 - The solve is timed to a tenth, the **best time per difficulty** persists in
   `localStorage`, and a finished solve reports how far off your best it was.
+  **The clock belongs to the puzzle, not the attempt**: Restart clears the board
+  but never the time, and the clock keeps running while the board sits empty, so
+  a run going badly cannot be wiped to protect a best. Only a new puzzle starts a
+  new clock.
   A per-session **solve count and average** sits under the board.
 
 And some things purely because they make a run feel better:
