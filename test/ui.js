@@ -53,7 +53,7 @@ function makeDom() {
 
   const ids = ['clock', 'tiers', 'board', 'banner', 'bannerText', 'newBtn', 'restartBtn',
                'undoBtn', 'hintBtn', 'revealBtn', 'filled', 'total', 'tierStats', 'best',
-               'progressFill', 'themeBtn', 'autoBtn', 'session', 'soundBtn',
+               'progressFill', 'themeBtn', 'autoBtn', 'session', 'soundBtn', 'fx',
                'soundWave', 'soundWaveFar', 'soundMute'];
   for (const id of ids) { const e = makeEl('div'); e.setAttribute('id', id); }
   const root = makeEl('html');

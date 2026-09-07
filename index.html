@@ -88,6 +88,18 @@
   }
 
   /* ----------------------------------------------------------------- board */
+  /* Celebration layer: covers the viewport so a burst is not boxed in by the
+     board, and never intercepts input or adds scrollbars. */
+  svg.fx {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 20; overflow: hidden;
+  }
+  @keyframes boardPop {
+    0% { transform: scale(1); } 35% { transform: scale(1.025); } 100% { transform: scale(1); }
+  }
+  svg.board.won { animation: boardPop .45s ease-out; }
+  @media (prefers-reduced-motion: reduce) { svg.board.won { animation: none; } }
+
   .boardwrap { position: relative; }
   svg.board { width: 100%; height: auto; display: block; touch-action: none; cursor: crosshair; }
   svg.board.busy { opacity: .3; pointer-events: none; }
@@ -169,6 +181,8 @@
   </header>
 
   <div class="tiers" id="tiers"></div>
+
+  <svg class="fx" id="fx" aria-hidden="true" xmlns="http://www.w3.org/2000/svg"></svg>
 
   <div class="boardwrap">
     <svg class="board" id="board" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -1073,12 +1087,11 @@
     var head = state.path[state.path.length - 1];
     if (cell === head) return;
     if (state.path.length > 1 && cell === state.path[state.path.length - 2]) { pop(); return; }
-    var at = state.inPath[cell] ? state.path.indexOf(cell) : -1;
-    if (at >= 0) {                            // tapped a cell already drawn: rewind to it
-      while (state.path.length > at + 1) state.inPath[state.path.pop()] = 0;
-      state.solved = false; setBanner(null); render();
-      return;
-    }
+    // Anything else already on the line is ignored. Jumping the head back to an
+    // arbitrary drawn cell used to erase everything after it, which a stray
+    // mouse movement could trigger by accident. The only way back is to retrace
+    // the line one square at a time (or Undo).
+    if (state.inPath[cell]) return;
     if (state.engine.canStep(state.path, state.inPath, cell)) push(cell);
   }
 
@@ -1095,35 +1108,72 @@
   }
 
   /*
-   * A short burst from the last cell, but only when a personal best is actually
-   * beaten -- it has to stay rare or it stops meaning anything. Particles live
-   * in the board's own SVG and the group is removed when it finishes.
+   * Celebration. Fired on every solve, and roughly twice the size when a
+   * personal best falls. Particles live in a fixed full-viewport layer so the
+   * burst is not boxed inside the board, and the whole group is torn down when
+   * it finishes. Waves are scheduled inside the animation loop rather than on
+   * timers, so nothing can fire after the layer is gone.
    */
-  function startConfetti(cell) {
-    if (reducedMotion()) return;
-    var board = el('board');
-    var group = node('g', { id: 'confetti' });
-    var colours = ['var(--accent)', 'var(--path)', 'var(--good)'];
-    var parts = [];
-    for (var i = 0; i < 18; i++) {
-      var angle = -Math.PI / 2 + (Math.random() - 0.5) * 2.4;
-      var speed = 190 + Math.random() * 250;
-      var bit = node('rect', {
-        x: -5, y: -5, width: 10, height: 10, rx: 2, fill: colours[i % colours.length]
-      });
-      group.appendChild(bit);
-      parts.push({
-        node: bit, x: cx(cell), y: cy(cell),
+  var CONFETTI_COLOURS = [
+    'var(--accent)', 'var(--path)', 'var(--good)', '#ff5f9e', '#8b5cf6', '#ffffff'
+  ];
+
+  function spawnBurst(store, x, y, count, power) {
+    for (var i = 0; i < count; i++) {
+      var angle = -Math.PI / 2 + (Math.random() - 0.5) * 2.5;
+      var speed = (260 + Math.random() * 620) * power;
+      var size = 5 + Math.random() * 8;
+      var round = Math.random() < 0.35;
+      var bit = round
+        ? node('circle', { r: size / 2, fill: CONFETTI_COLOURS[(Math.random() * CONFETTI_COLOURS.length) | 0] })
+        : node('rect', {
+            x: -size / 2, y: -size / 2, width: size, height: size, rx: 1.5,
+            fill: CONFETTI_COLOURS[(Math.random() * CONFETTI_COLOURS.length) | 0]
+          });
+      store.layer.appendChild(bit);
+      store.parts.push({
+        node: bit, x: x, y: y,
         vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-        rot: Math.random() * 360, spin: (Math.random() - 0.5) * 720
+        rot: Math.random() * 360, spin: (Math.random() - 0.5) * 900,
+        round: round
       });
     }
-    board.appendChild(group);
-    var now = performance.now();
-    state.confetti = { group: group, parts: parts, start: now, last: now };
   }
 
-  // --------------------------------------------------------------- clock
+  function celebrate(isBest) {
+    if (reducedMotion()) return;
+    var layer = el('fx');
+    if (!layer) return;
+    layer.innerHTML = '';
+    invalidateRect();                        // the page may have scrolled since the drag
+    var r = boardRect();
+    if (!r || !r.width) return;
+    var head = state.path[state.path.length - 1];
+    var p = state.puzzle;
+    var scale = r.width / (p.cols * U + 2 * PAD);
+    var hx = r.left + (cx(head) + PAD) * scale;
+    var hy = r.top + (cy(head) + PAD) * scale;
+
+    // A burst where the line finished, then two more from the lower corners of
+    // the board a beat later, so it reads as a cascade rather than one puff.
+    var big = isBest ? 2 : 1;
+    var waves = [
+      { at: 0.00, x: hx, y: hy, n: 46 * big, power: 1 },
+      { at: 0.16, x: r.left + r.width * 0.12, y: r.top + r.height * 0.95, n: 26 * big, power: 1.25 },
+      { at: 0.30, x: r.left + r.width * 0.88, y: r.top + r.height * 0.95, n: 26 * big, power: 1.25 }
+    ];
+    if (isBest) waves.push({ at: 0.48, x: r.left + r.width / 2, y: r.top + r.height * 0.6, n: 60, power: 1.5 });
+
+    var now = performance.now();
+    state.confetti = { layer: layer, parts: [], waves: waves, start: now, last: now };
+
+    var board = el('board');
+    board.classList.remove('won');
+    void board.getBoundingClientRect();      // restart the animation if it is mid-flight
+    board.classList.add('won');
+  }
+
+  // --------------------------------------------------------------- clock  // --------------------------------------------------------------- clock
 
   function fmt(ms) {
     var s = Math.max(0, ms) / 1000;
@@ -1159,19 +1209,25 @@
       var dt = Math.min(0.05, (at - cf.last) / 1000);
       cf.last = at;
       var life = (at - cf.start) / 1000;
-      if (life > 1.15) {
-        if (cf.group.parentNode) cf.group.parentNode.removeChild(cf.group);
+      while (cf.waves.length && life >= cf.waves[0].at) {
+        var w = cf.waves.shift();
+        spawnBurst(cf, w.x, w.y, w.n, w.power);
+      }
+      if (life > 2.1) {
+        cf.layer.innerHTML = '';
         state.confetti = null;
       } else {
         for (var c = 0; c < cf.parts.length; c++) {
           var bit = cf.parts[c];
           bit.vy += 1500 * dt;
+          bit.vx *= 0.995;
           bit.x += bit.vx * dt;
           bit.y += bit.vy * dt;
           bit.rot += bit.spin * dt;
-          bit.node.setAttribute('transform',
-            'translate(' + bit.x + ',' + bit.y + ') rotate(' + bit.rot + ')');
-          bit.node.setAttribute('opacity', Math.max(0, 1 - life / 1.15));
+          bit.node.setAttribute('transform', bit.round
+            ? 'translate(' + bit.x + ',' + bit.y + ')'
+            : 'translate(' + bit.x + ',' + bit.y + ') rotate(' + bit.rot + ')');
+          bit.node.setAttribute('opacity', Math.max(0, 1 - Math.max(0, life - 0.9) / 1.2));
         }
       }
     }
@@ -1222,7 +1278,7 @@
       sub = isBest ? 'beat ' + fmt(prev) : fmt(state.elapsed - prev) + ' off your best';
     }
     setBanner((isBest ? 'New best · ' : cheer() + ' · ') + fmt(state.elapsed), 'good', sub);
-    if (isBest && isFinite(prev)) startConfetti(state.path[state.path.length - 1]);
+    celebrate(isBest);
     if (state.autoNext) state.advanceTimer = setTimeout(newPuzzle, 1800);
   }
 
@@ -1336,6 +1392,9 @@
     drag.active = false; drag.tip = null; drag.settle = null; drag.at = null;
     clearHint();
     state.hintsUsed = 0;
+    state.confetti = null;
+    if (el('fx')) el('fx').innerHTML = '';
+    el('board').classList.remove('won');
     invalidateRect();
     setBanner(null);
     drawStatic();

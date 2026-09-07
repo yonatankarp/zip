@@ -88,9 +88,12 @@ Three checks, cheapest first:
 
 ## Playing
 
-Drag from **1**. Dragging back over the previous cell undoes that step; tapping
-any cell already on the path rewinds to it. Arrow keys move the head,
-<kbd>U</kbd> undoes, <kbd>R</kbd> restarts, <kbd>N</kbd> generates a new puzzle.
+Drag from **1**. The line only ever retracts by retracing it — dragging back
+over the previous square removes that one step. Touching some earlier part of
+the line does nothing, deliberately: letting the head jump backwards meant one
+careless sweep of the mouse could erase most of a board. Arrow keys move the
+head, <kbd>U</kbd> undoes a step, <kbd>R</kbd> restarts, <kbd>N</kbd> generates a
+new puzzle.
 
 A few things exist specifically for drilling speed:
 
@@ -130,8 +133,12 @@ And some things purely because they make a run feel better:
   built — until you ask for it.
 - **Haptics** on phones, on each number and on the solve.
 - A reached number **swells briefly**, and finishing sends a **bright dash
-  running the length of the completed route**. The sweep is a decorative overlay
-  on top of the real line, so it cannot affect state.
+  running the length of the completed route**, then a **burst of confetti** —
+  about a hundred pieces on an ordinary solve and two and a half times that when
+  a personal best falls, thrown in waves from the finishing square and the
+  corners of the board so it reads as a cascade rather than one puff. It plays in
+  a fixed full-viewport layer, so it is not boxed in by the board. Both the sweep
+  and the burst are pure overlays: if their frames never run, nothing is lost.
 - A **streak** counter for consecutive solves, which a reveal resets.
 
 Theme follows the system and can be pinned light or dark with the button in the

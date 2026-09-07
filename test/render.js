@@ -343,27 +343,77 @@ const POINTS = `
     await page.close();
   }
 
-  // --- confetti fires on a personal best, and only then ---------------------
-  {
-    const page = await launch({ port: port++ });
+  // --- every solve celebrates, and a personal best celebrates harder --------
+  const burstSize = async (seed, priorBest) => {
+    const page = await launch();
     await page.setup({ scheme: 'dark', width: 520, height: 900 });
     await page.goto(URL);
-    // A prior best on record, so beating it is a genuine improvement rather
-    // than a first solve -- that is the only case that earns a burst.
-    await page.eval("localStorage.setItem('zip.best.medium', '999999'); return 1");
-    await page.eval("window.__zip.load(Zip.generateDifficulty('medium', 1212)); return 1");
+    if (priorBest) await page.eval(`localStorage.setItem('zip.best.medium', '${priorBest}'); return 1`);
+    await page.eval(`window.__zip.load(Zip.generateDifficulty('medium', ${seed})); return 1`);
     const pts = await page.eval(POINTS);
     await page.drag(pts);
-    await sleep(120);
-    ok(await page.eval("return !!document.getElementById('confetti')"), 'no burst on a personal best');
-    const bits = await page.eval("return document.querySelectorAll('#confetti rect').length");
-    ok(bits === 18, `burst has ${bits} pieces`);
+    await sleep(700);                    // long enough for every wave to land
+    const peak = await page.eval("return document.querySelectorAll('#fx > *').length");
     const moved = await page.eval(`
-      var a = document.querySelectorAll('#confetti rect')[0].getAttribute('transform');
-      return !!a && a.indexOf('translate') === 0;`);
-    ok(moved, 'burst pieces are not being moved');
-    await sleep(1400);
-    ok(await page.eval("return !document.getElementById('confetti')"), 'burst never cleaned up');
+      var first = document.querySelector('#fx > *');
+      var t = first && first.getAttribute('transform');
+      return !!t && t.indexOf('translate') === 0;`);
+    // SVG className is an SVGAnimatedString, not a string.
+    const popped = await page.eval(
+      "return document.getElementById('board').classList.contains('won')");
+    await sleep(1800);
+    const after = await page.eval("return document.querySelectorAll('#fx > *').length");
+    await page.close();
+    return { peak, moved, popped, after };
+  };
+
+  {
+    // An "ordinary" solve needs an unbeatable record on file -- with nothing
+    // stored, the first solve is itself a personal best.
+    const plain = await burstSize(1212, 1);
+    ok(plain.peak > 50, `an ordinary solve threw only ${plain.peak} pieces`);
+    ok(plain.moved, 'burst pieces are not being moved');
+    ok(plain.popped, 'the board did not pop on the win');
+    ok(plain.after === 0, `burst never cleaned up (${plain.after} pieces left)`);
+
+    // Beating a stored best should be visibly bigger than an ordinary solve.
+    const best = await burstSize(1212, 999999);
+    ok(best.peak > plain.peak * 1.6,
+       `a personal best threw ${best.peak} pieces vs ${plain.peak} for an ordinary solve`);
+    ok(best.after === 0, 'personal-best burst never cleaned up');
+  }
+
+  // --- the line must not be erasable by a stray movement --------------------
+  // Moving the pointer back onto some earlier part of the line used to truncate
+  // everything after it, so one careless sweep wiped the board.
+  {
+    const page = await launch();
+    await page.setup({ scheme: 'dark', width: 520, height: 900 });
+    await page.goto(URL);
+    await page.eval("window.__zip.load(Zip.generateDifficulty('medium', 3141)); return 1");
+    const pts = await page.eval(POINTS);
+
+    await page.mouse('mousePressed', pts[0].x, pts[0].y);
+    for (let i = 1; i <= 8; i++) await page.mouse('mouseMoved', pts[i].x, pts[i].y);
+    const drawn = await page.eval("return Number(document.getElementById('filled').textContent)");
+    ok(drawn === 9, `setup drew ${drawn} cells, expected 9`);
+
+    // Land on cells well back along the line: each must be refused outright.
+    for (const back of [0, 2, 4]) {
+      await page.eval(`window.__zip.step(window.__zip.state.path[${back}]); return 1`);
+      const now = await page.eval("return Number(document.getElementById('filled').textContent)");
+      ok(now === 9, `touching drawn cell #${back} truncated the line to ${now}`);
+    }
+
+    // Retracing, though, must still work: back over the previous cell pops one.
+    await page.mouse('mouseMoved', pts[7].x, pts[7].y);
+    const one = await page.eval("return Number(document.getElementById('filled').textContent)");
+    ok(one === 8, `retracing one cell left ${one}, expected 8`);
+    await page.mouse('mouseMoved', pts[6].x, pts[6].y);
+    await page.mouse('mouseMoved', pts[5].x, pts[5].y);
+    const three = await page.eval("return Number(document.getElementById('filled').textContent)");
+    ok(three === 6, `retracing three cells left ${three}, expected 6`);
+    await page.mouse('mouseReleased', pts[5].x, pts[5].y);
     await page.close();
   }
 
@@ -379,7 +429,7 @@ const POINTS = `
     await sleep(150);
     ok(await page.eval("return !document.getElementById('shine')"),
        'win sweep ran despite prefers-reduced-motion');
-    ok(await page.eval("return !document.getElementById('confetti')"),
+    ok(await page.eval("return document.querySelectorAll('#fx > *').length === 0"),
        'burst ran despite prefers-reduced-motion');
     // The game itself must be unaffected.
     const won = await page.eval(`return {
@@ -488,12 +538,10 @@ const POINTS = `
     await sleep(150);
     const out = await page.eval(`return {
       best: localStorage.getItem('zip.best.medium'),
-      sub: document.getElementById('bannerText').textContent,
-      confetti: !!document.getElementById('confetti')
+      sub: document.getElementById('bannerText').textContent
     };`);
     ok(out.best === '999999', `a hinted solve overwrote the best time (now ${out.best})`);
     ok(/hint/i.test(out.sub), `banner did not mention the hint: "${out.sub}"`);
-    ok(!out.confetti, 'a hinted solve threw confetti');
     await page.close();
   }
 
