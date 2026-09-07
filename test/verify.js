@@ -6,8 +6,11 @@
  *   4. numbers are inside the grid, walls sit on real adjacencies and never on
  *      an edge the solution uses
  * Usage: node test/verify.js [samplesPerTier]
+ *
+ * Imports the engine source directly -- Node strips the types -- so this
+ * suite needs no build and cannot drift from what the app bundles.
  */
-const Z = require('./load.js').loadEngine();
+import * as Z from '../src/engine/zip.ts';
 
 const N = parseInt(process.argv[2] || '500', 10);
 let failures = 0;

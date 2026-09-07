@@ -4,10 +4,10 @@
  * just enough to load the page, emulate a viewport and colour scheme, dispatch
  * real input, read the DOM, and capture screenshots.
  */
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
 
 // Look where Chrome actually lives on a dev Mac and on a CI runner, so the
 // browser tests run in both without configuration.
@@ -21,14 +21,14 @@ const CANDIDATES = [
   '/usr/bin/chromium'
 ].filter(Boolean);
 
-function findChrome() {
+export function findChrome() {
   return CANDIDATES.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || null;
 }
 const CHROME = findChrome();
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+export function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function launch({ autoplay = 'relaxed' } = {}) {
+export async function launch({ autoplay = 'relaxed' } = {}) {
   if (!CHROME) throw new Error('no Chrome found; tried:\n  ' + CANDIDATES.join('\n  '));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'zip-cdp-'));
   const proc = spawn(CHROME, [
@@ -165,4 +165,4 @@ async function launch({ autoplay = 'relaxed' } = {}) {
   return page;
 }
 
-module.exports = { launch, sleep, findChrome };
+

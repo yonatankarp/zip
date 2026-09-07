@@ -1,0 +1,132 @@
+/* Dark is the base palette; light applies when the system asks for it, or when
+   the theme button pins it. Pinning dark wins over the media query. The two
+   light blocks must stay identical -- test/render.js asserts it. */
+:root {
+  --bg: #0e1014;
+  --panel: #171a21;
+  --board: #131720;
+  --line: #272d3a;
+  --ink: #e9edf5;
+  --dim: #868fa3;
+  --accent: #f5b544;
+  --accent-ink: #14161c;
+  --path: #4d8bff;
+  --path-ink: #ffffff;
+  --wall: #c2cbdd;
+  --good: #35d07f;
+  --bad: #ff6259;
+  --shadow: 0 14px 44px rgba(0, 0, 0, .5);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f2f4f8; --panel: #ffffff; --board: #ffffff; --line: #e0e5ef;
+    --ink: #121722; --dim: #6b7385; --accent: #f0a92c; --accent-ink: #221a05;
+    --path: #2f6bff; --wall: #2c3446; --shadow: 0 14px 40px rgba(20, 30, 60, .12);
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f2f4f8; --panel: #ffffff; --board: #ffffff; --line: #e0e5ef;
+  --ink: #121722; --dim: #6b7385; --accent: #f0a92c; --accent-ink: #221a05;
+  --path: #2f6bff; --wall: #2c3446; --shadow: 0 14px 40px rgba(20, 30, 60, .12);
+}
+
+* { box-sizing: border-box; }
+html, body { overscroll-behavior: none; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 15px/1.45 ui-sans-serif, -apple-system, "SF Pro Text", Inter, system-ui, sans-serif;
+  display: flex; flex-direction: column; align-items: center;
+  min-height: 100dvh;
+  padding: max(14px, env(safe-area-inset-top)) 14px calc(18px + env(safe-area-inset-bottom));
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.wrap { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 13px; }
+
+/* ------------------------------------------------------------------ header */
+header { display: flex; align-items: center; gap: 10px; }
+.brand { display: flex; align-items: center; gap: 8px; font-weight: 650; font-size: 17px; letter-spacing: -.01em; }
+.brand svg { display: block; }
+.spacer { flex: 1; }
+.clock {
+  font: 650 25px/1 ui-monospace, "SF Mono", Menlo, monospace;
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em; transition: color .2s;
+}
+.clock.done { color: var(--good); }
+.icon-btn {
+  appearance: none; border: 1px solid var(--line); background: var(--panel);
+  color: var(--dim); width: 34px; height: 34px; border-radius: 9px;
+  display: grid; place-items: center; cursor: pointer; padding: 0;
+}
+.icon-btn:hover { color: var(--ink); }
+.icon-btn[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); }
+
+/* ------------------------------------------------------------------- tiers */
+.tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.tier {
+  appearance: none; border: 1px solid var(--line); background: var(--panel);
+  color: var(--dim); border-radius: 10px; padding: 9px 4px; cursor: pointer;
+  font: 600 13px/1 inherit; transition: background .12s, color .12s, border-color .12s;
+}
+.tier:hover { color: var(--ink); }
+.tier[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+
+/* ------------------------------------------------------------------- board */
+/* Celebration layer: covers the viewport so a burst is not boxed in by the
+   board, and never intercepts input or adds scrollbars. */
+svg.fx {
+  position: fixed; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; z-index: 20; overflow: hidden;
+}
+@keyframes boardPop {
+  0% { transform: scale(1); } 35% { transform: scale(1.025); } 100% { transform: scale(1); }
+}
+svg.board.won { animation: boardPop .45s ease-out; }
+@media (prefers-reduced-motion: reduce) { svg.board.won { animation: none; } }
+
+.boardwrap { position: relative; }
+svg.board { width: 100%; height: auto; display: block; touch-action: none; cursor: crosshair; }
+svg.board.busy { opacity: .3; pointer-events: none; }
+.progress { height: 3px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.progress i { display: block; height: 100%; width: 0; background: var(--path); transition: width .12s linear; }
+.progress i.done { background: var(--good); }
+
+.banner { position: absolute; inset: auto 0 12px 0; display: none; justify-content: center; pointer-events: none; }
+.banner.show { display: flex; }
+.banner b {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+  padding: 13px 20px; font-size: 16px; text-align: center; box-shadow: var(--shadow);
+}
+.banner b small { display: block; font-weight: 400; color: var(--dim); font-size: 12.5px; margin-top: 3px; }
+
+/* ---------------------------------------------------------------- controls */
+.controls { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
+.btn {
+  appearance: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  border-radius: 10px; padding: 12px 2px; cursor: pointer; font: 500 12.5px/1 inherit;
+}
+.btn:hover { border-color: var(--dim); }
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--path); border-color: var(--path); color: #fff; }
+
+.status {
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+  color: var(--dim); font-size: 12.5px; font-variant-numeric: tabular-nums;
+}
+.status b { color: var(--ink); font-weight: 600; }
+.chip {
+  appearance: none; border: 1px solid var(--line); background: transparent; color: var(--dim);
+  border-radius: 999px; padding: 5px 11px; cursor: pointer; font: 500 12px/1 inherit;
+}
+.chip[aria-pressed="true"] { color: var(--ink); border-color: var(--dim); }
+.chip .dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--line); margin-right: 6px; vertical-align: 1px;
+}
+.chip[aria-pressed="true"] .dot { background: var(--good); }
+.hint { color: var(--dim); font-size: 11.5px; text-align: center; line-height: 1.9; }
+kbd {
+  font: 11px/1 ui-monospace, Menlo, monospace; border: 1px solid var(--line);
+  border-bottom-width: 2px; border-radius: 4px; padding: 2px 5px; color: var(--ink);
+}
+@media (max-width: 380px) { .hint { display: none; } }

@@ -23,6 +23,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: npm
+      - run: npm ci
       # The runner image ships Chrome, so the real-browser suite runs here too;
       # test/render.js skips itself if it cannot find one.
       - name: Run the suite
@@ -36,9 +38,15 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: dist
       - id: deployment
         uses: actions/deploy-pages@v4

@@ -3,7 +3,7 @@
  * rule that is wrong here is wrong in the game.
  * Usage: node test/play.js [puzzlesPerTier]
  */
-const Z = require('./load.js').loadEngine();
+import * as Z from '../src/engine/zip.ts';
 const N = parseInt(process.argv[2] || '50', 10);
 let checks = 0, failures = 0;
 const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.log('  FAIL: ' + msg); } };

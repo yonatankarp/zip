@@ -1,0 +1,35 @@
+{
+  "name": "zip",
+  "version": "1.0.0",
+  "description": "A Zip clone with randomly generated, guaranteed-solvable puzzles in four measured difficulties.",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "./test/all.sh"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yonatankarp/zip.git"
+  },
+  "type": "module",
+  "bugs": {
+    "url": "https://github.com/yonatankarp/zip/issues"
+  },
+  "homepage": "https://github.com/yonatankarp/zip#readme",
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.2.2"
+  },
+  "private": true
+}

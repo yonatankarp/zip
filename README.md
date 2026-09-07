@@ -3,28 +3,47 @@
 A playable clone of LinkedIn's *Zip* with a generator that produces random,
 guaranteed-solvable puzzles in four difficulties — built for speed training.
 
-The whole game is one static `index.html` — no build step, no dependencies, no
-network requests. Open the file, or serve the directory as-is.
+React + TypeScript, built with Vite. The engine is a plain framework-free
+module; React owns the chrome and never the board.
 
 ```
-open index.html        # play locally
+npm install
+npm run dev            # play locally with hot reload
+npm run build          # typecheck, then bundle to dist/
 ./test/all.sh          # everything below
-node test/verify.js    # 500 generated puzzles per tier, all invariants
+node test/verify.js    # generated puzzles per tier, all invariants
 node test/play.js      # interaction rules
-node test/ui.js        # the UI under a DOM stub, driven through its own handlers
-node test/render.js    # the page in real headless Chrome, driven by real input
+node test/render.js    # the built app in real Chrome, driven by real input
 ```
+
+## Architecture
+
+The split that matters is **engine / core / chrome**, not the framework:
+
+- `src/engine/zip.ts` — generation, solving and difficulty measurement. No DOM,
+  no React, no imports. Node runs it directly (it strips the types), so the
+  engine suites need no build and cannot drift from what the app bundles.
+- `src/game/` — the game itself: rules, input, timing, animation. Also
+  framework-free. `board.ts` draws the SVG **imperatively**, because drawing
+  runs on every `pointermove` and every animation frame — a finished board plus
+  a celebration is several hundred attribute writes per frame. That is a
+  mutation workload, not a reconciliation one, so React hands the `<svg>` over
+  by ref and never touches its contents.
+- `src/components/` — React: header, tiers, controls, status, banner, progress.
+  Everything that is genuinely a function of state.
+
+The core publishes a snapshot to React **at most once per animation frame**, so
+however fast the pointer moves, the chrome re-renders at a human rate and the
+drag path stays free of React entirely.
 
 ## Deploying
 
 `.github/workflows/deploy.yml` runs the full suite on every push to `main` and
-publishes to GitHub Pages only if it passes. Set **Settings → Pages → Source**
-to **GitHub Actions** once; there is nothing to build, so the deploy job just
-uploads the repository as-is.
+publishes `dist/` to GitHub Pages only if it passes. Set **Settings → Pages →
+Source** to **GitHub Actions** once.
 
-`.nojekyll` keeps Pages from running the files through Jekyll. The page pulls no
-fonts, scripts, or images from anywhere, so it also works offline, from
-`file://`, and on any other static host.
+`public/.nojekyll` keeps Pages from running the output through Jekyll. The page
+still pulls no fonts, images, or scripts from any other host.
 
 ## The rules
 
@@ -151,30 +170,27 @@ header.
 ## Layout
 
 ```
-index.html     the entire game: engine + UI, two inline scripts
-.nojekyll      tell GitHub Pages to serve the files verbatim
-test/load.js   pulls the inline scripts out of index.html for the tests
-test/verify.js generator invariants: legality, uniqueness, difficulty band
-test/play.js   interaction rules: start, walls, number order, revisits
-test/ui.js     the page under a DOM stub: hit testing, drag, keys, win
-test/browser.js  a ~120-line CDP driver: launch, emulate, input, screenshot
-test/render.js real headless Chrome: renders in both themes, real mouse input
-test/all.sh    runs all four
+index.html          Vite entry
+src/engine/zip.ts   generation, solving, difficulty measurement (no DOM)
+src/game/core.ts    rules, input, timing, snapshots for React
+src/game/board.ts   imperative SVG renderer
+src/game/fx.ts      the celebration layer
+src/game/audio.ts   oscillator sound
+src/components/     React chrome
+test/verify.js      generator invariants: legality, uniqueness, difficulty band
+test/play.js        interaction rules: start, walls, number order, revisits
+test/browser.js     a small dependency-free CDP driver
+test/serve.js       static server for dist/ (ES modules cannot load over file://)
+test/render.js      the built app in real Chrome: rendering, input, everything
+test/all.sh         runs all three
 ```
 
-The first inline script is the engine — generation, solving and difficulty
-measurement, with no DOM dependency. The tests extract and run that exact script
-rather than a parallel copy, so there is nothing that can drift out of sync with
-what the browser loads.
+There is one UI suite now, and it drives the same bundle that gets deployed.
+The old DOM-stub suite existed because there was no browser available; a stub
+cannot host React, and a real browser is strictly better evidence anyway, so its
+coverage moved into `test/render.js` rather than being dropped.
 
-`test/ui.js` runs `index.html`'s own scripts under a small hand-rolled DOM
-stub and drives the real `pointerdown`/`pointermove` handlers with coordinates
-derived from the SVG viewBox, so hit testing, rendering, the timer and the win
-path all actually execute. Drags are replayed aiming at cell centres *and* 2%
-inside each corner — the corner aims are the ones that would catch a hit test
-that mis-registers against the board's padding.
-
-`test/render.js` covers what a stub cannot: it drives real headless Chrome over
+`test/render.js` drives real headless Chrome over
 the DevTools protocol (no Puppeteer — `test/browser.js` is a small dependency-free
 driver built on Node's built-in `WebSocket`), checks the page renders without
 console errors in both colour schemes, that the layout never scrolls horizontally
