@@ -76,6 +76,57 @@ const POINTS = `
     await page.close();
   }
 
+  // --- the two routes to a light palette must agree -------------------------
+  // The light tokens are declared twice: once under prefers-color-scheme for
+  // system-light viewers, once under [data-theme="light"] for the pin button.
+  // If those lists drift, the same user gets two different palettes.
+  {
+    const page = await launch({ port: port++ });
+    await page.setup({ scheme: 'light', width: 520, height: 900 });
+    await page.goto(URL);
+    const TOKENS = ['--bg', '--panel', '--board', '--line', '--ink', '--dim',
+                    '--accent', '--accent-ink', '--path', '--wall', '--shadow'];
+    const read = `
+      var cs = getComputedStyle(document.documentElement);
+      return ${JSON.stringify(TOKENS)}.map(function (t) { return t + '=' + cs.getPropertyValue(t).trim(); });`;
+    const viaMedia = await page.eval(read);
+    const viaPin = await page.eval(
+      `document.documentElement.setAttribute('data-theme', 'light'); ` + read);
+    for (let i = 0; i < TOKENS.length; i++) {
+      ok(viaMedia[i] === viaPin[i],
+         `light palette differs by route: system gives "${viaMedia[i]}", pinned gives "${viaPin[i]}"`);
+      ok(viaMedia[i].split('=')[1] !== '', `${TOKENS[i]} is empty under system light`);
+    }
+    await page.close();
+  }
+
+  // --- layout holds across the width range ----------------------------------
+  {
+    const page = await launch({ port: port++ });
+    await page.setup({ scheme: 'dark', width: 520, height: 900 });
+    await page.goto(URL);
+    for (const width of [320, 360, 375, 390, 414, 430, 520, 768, 1024]) {
+      await page.send('Emulation.setDeviceMetricsOverride',
+        { width, height: 900, deviceScaleFactor: 2, mobile: width < 500 });
+      await sleep(90);
+      const m = await page.eval(`
+        var d = document.documentElement, b = document.getElementById('board');
+        return {
+          scrollW: d.scrollWidth, clientW: d.clientWidth,
+          board: b.getBoundingClientRect().width,
+          hint: getComputedStyle(document.querySelector('.hint')).display,
+          controls: document.getElementById('newBtn').getBoundingClientRect().width
+        };`);
+      ok(m.scrollW <= m.clientW + 1, `${width}px: page scrolls horizontally (${m.scrollW} > ${m.clientW})`);
+      ok(m.board > 120, `${width}px: board collapsed to ${Math.round(m.board)}px`);
+      ok(m.controls > 40, `${width}px: buttons collapsed to ${Math.round(m.controls)}px`);
+      // The keyboard hint is meaningless on a phone and is meant to drop out.
+      if (width <= 380) ok(m.hint === 'none', `${width}px: keyboard hint still shown`);
+      else ok(m.hint !== 'none', `${width}px: keyboard hint hidden on a wide screen`);
+    }
+    await page.close();
+  }
+
   // --- a genuine mouse drag solves the puzzle -------------------------------
   {
     const page = await launch({ port: port++ });

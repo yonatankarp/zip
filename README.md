@@ -141,9 +141,12 @@ that mis-registers against the board's padding.
 `test/render.js` covers what a stub cannot: it drives real headless Chrome over
 the DevTools protocol (no Puppeteer — `test/browser.js` is a small dependency-free
 driver built on Node's built-in `WebSocket`), checks the page renders without
-console errors in both colour schemes and never scrolls horizontally, then solves
-a puzzle with genuine mouse input and waits for auto-next to advance the board.
-It skips itself if Chrome is not installed.
+console errors in both colour schemes, that the layout never scrolls horizontally
+at any width from 320 px to 1024 px, and that the two routes to a light palette —
+the `prefers-color-scheme` block and the pinned `[data-theme="light"]` block —
+resolve to identical tokens, since those lists are declared twice and could
+otherwise drift. It then solves a puzzle with genuine mouse input and waits for
+auto-next to advance the board. It skips itself if Chrome is not installed.
 
 Move legality during play comes from `engine.canStep()` — the UI does not
 restate the rules — and a finished solve is checked with `engine.validate()`
