@@ -22,6 +22,7 @@ import {
 export type Theme = 'system' | 'light' | 'dark';
 /** Daily is one shared board per UTC day; practice is the endless generator. */
 export type Mode = 'daily' | 'practice';
+export type ShareOutcome = 'shared' | 'copied' | 'cancelled' | 'failed';
 export type BannerKind = 'good' | 'bad' | 'wait';
 
 export interface Banner {
@@ -486,16 +487,36 @@ export class GameCore {
     this.markDirty();
   }
 
-  /** Copies the day's result. Returns false if the clipboard refused. */
-  async share(): Promise<boolean> {
+  /*
+   * Hand the day's result to the native share sheet where there is one -- on a
+   * phone that means Messages, WhatsApp, Slack, whatever they actually use --
+   * and fall back to the clipboard everywhere else. Per-network buttons were
+   * the alternative and are worse: they only reach one place, and prefilled
+   * text survives the trip unreliably.
+   *
+   * navigator.share must be reached from the user gesture, so nothing may be
+   * awaited before it.
+   */
+  async share(): Promise<ShareOutcome> {
     const result = readResult(this.day);
-    if (!result) return false;
+    if (!result) return 'failed';
     const text = shareText(result, streak(this.day), location.origin + location.pathname);
+
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ title: 'Zip', text });
+        return 'shared';
+      } catch (err) {
+        // Dismissing the sheet is a decision, not a failure; do not then go
+        // and quietly put it on the clipboard instead.
+        if (err instanceof Error && err.name === 'AbortError') return 'cancelled';
+      }
+    }
     try {
       await navigator.clipboard.writeText(text);
-      return true;
+      return 'copied';
     } catch {
-      return false;
+      return 'failed';
     }
   }
 

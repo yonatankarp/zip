@@ -78,6 +78,20 @@ const loadPuzzle = async (page, tier, seed) => {
   await settle(page);
 };
 
+/*
+ * Capture what the app hands to the clipboard rather than using a real one:
+ * clipboard access needs a focused document and granted permissions, neither of
+ * which a headless tab reliably has. Whether Chrome's clipboard works is not
+ * what these tests are about -- which path share() takes, and with what text, is.
+ */
+const stubClipboard = page => page.eval(`
+  window.__copied = null;
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: async text => { window.__copied = text; } }
+  });
+  return 1;`);
+
 const filled = async page => {
   await settle(page);
   return page.eval("return Number(document.getElementById('filled').textContent)");
@@ -656,10 +670,6 @@ const burst = async priorBest => {
 // --- solving the daily records it, and the result is shareable --------------
 {
   const page = await open();
-  await page.send('Browser.grantPermissions', {
-    origin: site.origin,
-    permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite']
-  });
   const day = await page.eval('return window.__zip.day');
   // Two prior days on record, so a streak exists to report.
   await page.eval(`
@@ -669,6 +679,11 @@ const burst = async priorBest => {
     return 1;`);
   await page.goto(URL);
   await page.eval('return !!window.__zip');
+  await stubClipboard(page);
+  // `delete` cannot remove a prototype property, so shadow it instead -- and a
+  // real drag grants transient activation, which would otherwise let the native
+  // share sheet succeed and legitimately skip the clipboard.
+  await page.eval("Object.defineProperty(navigator,'share',{configurable:true,value:undefined}); return 1");
   await settle(page);
   ok(await page.eval("return !!document.getElementById('dailyTodo')"), 'today already shows as solved');
   // A streak stands until a day is missed, so it shows before today is played.
@@ -693,10 +708,10 @@ const burst = async priorBest => {
 
   await click(page, 'shareBtn');
   await sleep(200);
-  const clip = await page.eval('return navigator.clipboard.readText()');
-  ok(/^Zip #\d+ — \d:\d\d\.\d/.test(clip), `share text was "${clip}"`);
-  ok(/backtrack/.test(clip), 'share text omits backtracks');
-  ok(clip.includes(site.origin), 'share text omits the link');
+  const clip = await page.eval('return window.__copied');
+  ok(typeof clip === 'string' && /^Zip #\d+ — \d:\d\d\.\d/.test(clip), `share text was "${clip}"`);
+  ok(/backtrack/.test(clip ?? ''), 'share text omits backtracks');
+  ok((clip ?? '').includes(site.origin), 'share text omits the link');
   ok(/Copied/.test(await page.eval("return document.getElementById('shareBtn').textContent")),
      'the share button gave no feedback');
 
@@ -736,6 +751,94 @@ const burst = async priorBest => {
   await sleep(400);           // long enough for any in-flight generation to finish
   const now = await page.eval('return JSON.stringify(window.__zip.state.puzzle.waypoints)');
   ok(now === claimed, 'a superseded generation replaced the loaded puzzle');
+  await page.close();
+}
+
+// --- link previews ----------------------------------------------------------
+{
+  const page = await open();
+  const meta = await page.eval(`
+    const read = sel => document.querySelector(sel)?.getAttribute('content') ?? null;
+    return {
+      title: read('meta[property="og:title"]'),
+      description: read('meta[property="og:description"]'),
+      image: read('meta[property="og:image"]'),
+      url: read('meta[property="og:url"]'),
+      alt: read('meta[property="og:image:alt"]'),
+      card: read('meta[name="twitter:card"]')
+    };`);
+  ok(!!meta.title && !!meta.description, 'no og:title/og:description for link previews');
+  ok(meta.card === 'summary_large_image', `twitter:card is "${meta.card}"`);
+  ok(!!meta.alt, 'og:image has no alt text');
+  // Absolute, because relative og:image URLs are not resolved by most scrapers.
+  ok(/^https:\/\/.+\/og\.png$/.test(meta.image ?? ''), `og:image is not an absolute png: "${meta.image}"`);
+  ok(/^https:\/\//.test(meta.url ?? ''), `og:url is not absolute: "${meta.url}"`);
+  await page.close();
+
+  // ...and the file it names is actually in the build.
+  const res = await fetch(`${site.origin}/og.png`);
+  ok(res.status === 200, `og.png is missing from the build (HTTP ${res.status})`);
+  const bytes = Buffer.from(await res.arrayBuffer());
+  ok(bytes.length > 20000, `og.png is only ${bytes.length} bytes`);
+  ok(bytes.subarray(1, 4).toString() === 'PNG', 'og.png is not a PNG');
+}
+
+// --- sharing prefers the native sheet, and falls back to the clipboard ------
+{
+  const page = await open();
+  await page.eval(`
+    localStorage.setItem('zip.daily.' + window.__zip.day,
+      JSON.stringify({ day: window.__zip.day, ms: 41300, backtracks: 2, hinted: false }));
+    return 1;`);
+  await page.goto(URL);
+  await page.eval('return !!window.__zip');
+  await settle(page);
+  await stubClipboard(page);
+
+  // With a share sheet available it must be used, and the clipboard left alone.
+  await page.eval(`
+    window.__shared = null;
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      value: async data => { window.__shared = data; }
+    });
+    return 1;`);
+  await click(page, 'shareBtn');
+  await sleep(200);
+  const shared = await page.eval('return window.__shared');
+  ok(shared && /^Zip #\d+ — /.test(shared.text), `native share got "${shared && shared.text}"`);
+  ok(await page.eval('return window.__copied') === null,
+     'the clipboard was written even though the share sheet handled it');
+  ok(/Shared/.test(await page.eval("return document.getElementById('shareBtn').textContent")),
+     'no feedback after a native share');
+
+  // Dismissing the sheet is a decision, not a failure: nothing is copied.
+  await sleep(1700);                        // let the button label reset
+  await page.eval(`
+    window.__copied = null;
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      value: async () => { const e = new Error('cancelled'); e.name = 'AbortError'; throw e; }
+    });
+    return 1;`);
+  await click(page, 'shareBtn');
+  await sleep(200);
+  ok(await page.eval('return window.__copied') === null,
+     'dismissing the share sheet quietly copied to the clipboard instead');
+
+  // Any other share failure must still land the result on the clipboard --
+  // desktop Chrome exposes navigator.share but rejects it without a real
+  // gesture, which is exactly this case.
+  await page.eval(`
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      value: async () => { const e = new Error('nope'); e.name = 'NotAllowedError'; throw e; }
+    });
+    return 1;`);
+  await click(page, 'shareBtn');
+  await sleep(200);
+  ok(/^Zip #/.test(await page.eval('return window.__copied') ?? ''),
+     'a failed share did not fall back to the clipboard');
   await page.close();
 }
 

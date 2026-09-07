@@ -62,9 +62,24 @@ https://yonatankarp.com/zip/
 **Practice** is the endless generator with the four difficulty tiers, auto-next,
 and best times.
 
-Both count **backtracks** — single-square retractions — the way the original
-reports them. It is a better measure of a run than time alone, because it counts
-how much you guessed.
+Sharing uses the **Web Share API** where the browser has one, so on a phone the
+result goes straight to the native sheet — Messages, WhatsApp, Slack, whatever
+you actually use — and falls back to the clipboard everywhere else. Dismissing
+the sheet copies nothing, because dismissing is a decision rather than a
+failure. There are deliberately **no per-network share buttons**: they reach one
+place each, and prefilled text survives the trip unreliably, so a "share to X"
+button tends to post a bare link with none of your result. Copy-and-paste is
+also the pattern that actually spread.
+
+`tools/make-og.js` renders `public/og.png`, the card that shows when the link is
+pasted. The board in it is not a mock-up: the real app is loaded, a real puzzle
+part-solved, and its `<svg>` lifted out into the card layout, so the card cannot
+drift from the game. Re-run it after a visual change. Note that `og:image` must
+be an absolute URL, which pins the deployed origin in `index.html`.
+
+Both modes count **backtracks** — single-square retractions — the way the
+original reports them. It is a better measure of a run than time alone, because
+it counts how much you guessed.
 
 ## The rules
 
@@ -212,6 +227,8 @@ test/browser.js     a small dependency-free CDP driver
 test/serve.js       static server for dist/ (ES modules cannot load over file://)
 test/render.js      the built app in real Chrome: rendering, input, everything
 test/all.sh         runs all three
+test/calibrate.js   difficulty sweep; run when tier shapes change, not in CI
+tools/make-og.js    regenerates the link-preview card from the live renderer
 ```
 
 There is one UI suite now, and it drives the same bundle that gets deployed.

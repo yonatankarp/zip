@@ -110,12 +110,12 @@ export async function launch({ autoplay = 'relaxed' } = {}) {
     async close() { ws.close(); proc.kill(); try { fs.rmSync(profile, { recursive: true, force: true }); } catch {} },
 
     async setup({ width = 560, height = 960, mobile = false, scheme = 'light',
-                  reducedMotion = false } = {}) {
+                  reducedMotion = false, deviceScaleFactor = 2 } = {}) {
       await send('Page.enable');
       await send('Runtime.enable');
       await send('Log.enable');
       await send('Emulation.setDeviceMetricsOverride', {
-        width, height, deviceScaleFactor: 2, mobile
+        width, height, deviceScaleFactor, mobile
       });
       await send('Emulation.setEmulatedMedia', {
         features: [
@@ -124,6 +124,9 @@ export async function launch({ autoplay = 'relaxed' } = {}) {
         ]
       });
       if (mobile) await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+      // Clipboard reads and writes require a focused document, and a headless
+      // tab is not focused by default.
+      await send('Page.bringToFront').catch(() => {});
     },
 
     async goto(url) {
@@ -133,7 +136,7 @@ export async function launch({ autoplay = 'relaxed' } = {}) {
 
     async eval(expr) {
       const r = await send('Runtime.evaluate', {
-        expression: `(function(){ ${expr} })()`,
+        expression: `(async function(){ ${expr} })()`,
         returnByValue: true, awaitPromise: true
       });
       if (r.exceptionDetails) {

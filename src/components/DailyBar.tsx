@@ -1,20 +1,29 @@
 import { useState } from 'react';
 import { formatDuration } from '../game/daily.ts';
-import type { Snapshot } from '../game/core.ts';
+import type { ShareOutcome, Snapshot } from '../game/core.ts';
 
 interface Props {
   snap: Snapshot;
-  onShare: () => Promise<boolean>;
+  onShare: () => Promise<ShareOutcome>;
 }
 
 export default function DailyBar({ snap, onShare }: Props) {
-  const [copied, setCopied] = useState<'idle' | 'ok' | 'fail'>('idle');
+  const [outcome, setOutcome] = useState<ShareOutcome | 'idle'>('idle');
   const result = snap.dailyResult;
 
   const share = async () => {
-    const ok = await onShare();
-    setCopied(ok ? 'ok' : 'fail');
-    window.setTimeout(() => setCopied('idle'), 1600);
+    const result = await onShare();
+    setOutcome(result);
+    window.setTimeout(() => setOutcome('idle'), 1600);
+  };
+
+  const label = () => {
+    switch (outcome) {
+      case 'shared': return 'Shared';
+      case 'copied': return 'Copied';
+      case 'failed': return 'Copy failed';
+      default: return `Share ${formatDuration(result!.ms)}`;
+    }
   };
 
   return (
@@ -28,7 +37,7 @@ export default function DailyBar({ snap, onShare }: Props) {
         {result
           ? (
             <button className="chip" id="shareBtn" onClick={share}>
-              {copied === 'ok' ? 'Copied' : copied === 'fail' ? 'Copy failed' : `Share ${formatDuration(result.ms)}`}
+              {label()}
             </button>
           )
           : <span className="muted" id="dailyTodo">not solved yet</span>}
