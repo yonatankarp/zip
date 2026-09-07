@@ -107,10 +107,10 @@
   .banner b small { display: block; font-weight: 400; color: var(--dim); font-size: 12.5px; margin-top: 3px; }
 
   /* -------------------------------------------------------------- controls */
-  .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .controls { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; }
   .btn {
     appearance: none; border: 1px solid var(--line); background: var(--panel); color: var(--ink);
-    border-radius: 10px; padding: 12px 4px; cursor: pointer; font: 500 13px/1 inherit;
+    border-radius: 10px; padding: 12px 2px; cursor: pointer; font: 500 12.5px/1 inherit;
   }
   .btn:hover { border-color: var(--dim); }
   .btn:active { transform: translateY(1px); }
@@ -155,7 +155,8 @@
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M4 9v6h4l5 4V5L8 9H4z"></path>
-        <path id="soundWave" d="M16.5 8.5a5 5 0 0 1 0 7"></path>
+        <path id="soundWave" d="M15.5 9.5a3.5 3.5 0 0 1 0 5"></path>
+        <path id="soundWaveFar" d="M18.5 7a7 7 0 0 1 0 10"></path>
         <path id="soundMute" d="M17 9.5l4 5m0-5l-4 5" style="display:none"></path>
       </svg>
     </button>
@@ -179,6 +180,7 @@
     <button class="btn primary" id="newBtn">New</button>
     <button class="btn" id="restartBtn">Restart</button>
     <button class="btn" id="undoBtn">Undo</button>
+    <button class="btn" id="hintBtn">Hint</button>
     <button class="btn" id="revealBtn">Reveal</button>
   </div>
 
@@ -193,7 +195,7 @@
   </div>
   <div class="hint">
     drag from <b>1</b> · <kbd>←</kbd><kbd>↑</kbd><kbd>↓</kbd><kbd>→</kbd> move ·
-    <kbd>U</kbd> undo · <kbd>R</kbd> restart · <kbd>N</kbd> new
+    <kbd>U</kbd> undo · <kbd>H</kbd> hint · <kbd>R</kbd> restart · <kbd>N</kbd> new
   </div>
 </div>
 <!-- ===== engine: generation, solving, difficulty measurement ===== -->
@@ -785,7 +787,8 @@
     startedAt: 0, elapsed: 0, running: false, solved: false, revealed: false,
     prefetched: null, prefetchFor: null, advanceTimer: 0,
     session: { solved: 0, total: 0, streak: 0, bestStreak: 0 },
-    pops: [], sweep: null
+    pops: [], sweep: null, confetti: null, hint: null, hintsUsed: 0,
+    interacted: false
   };
 
   /*
@@ -794,10 +797,15 @@
    * has a shape you can hear; numbers ring brighter; a solve resolves. Kept
    * quiet and short -- this plays hundreds of times a session.
    */
-  var audio = { ctx: null, on: localStorage.getItem('zip.sound') !== 'off' };
+  var SOUND_MODES = ['all', 'sparse', 'off'];
+  var storedSound = localStorage.getItem('zip.sound');
+  if (storedSound === 'on' || storedSound === null) storedSound = 'all';   // pre-3-state values
+  var audio = { ctx: null, mode: SOUND_MODES.indexOf(storedSound) >= 0 ? storedSound : 'all' };
+
+  function audible() { return audio.mode !== 'off'; }
 
   function ensureAudio() {
-    if (audio.ctx || !audio.on) return;
+    if (audio.ctx || !audible()) return;
     var AC = (typeof window !== 'undefined') && (window.AudioContext || window.webkitAudioContext);
     if (!AC) return;
     try { audio.ctx = new AC(); } catch (e) { audio.ctx = null; }
@@ -815,18 +823,20 @@
     osc.start(t); osc.stop(t + dur + 0.03);
   }
   function buzz(pattern) {
-    if (!audio.on) return;
+    // Browsers reject (and log) haptics before the user has actually touched
+    // the page, so don't ask until they have.
+    if (!audible() || !state.interacted) return;
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
       try { navigator.vibrate(pattern); } catch (e) { /* not supported */ }
     }
   }
   function soundStep(progress) {
-    if (!audio.on) return;
+    if (audio.mode !== 'all') return;      // 'sparse' keeps only numbers and wins
     ensureAudio();
     tone(280 * Math.pow(2, progress * 1.2), 0, 0.05, 0.028, 'sine');
   }
   function soundNumber(index) {
-    if (!audio.on) return;
+    if (!audible()) return;
     ensureAudio();
     var base = 523.25 * Math.pow(2, Math.min(index, 12) / 12);
     tone(base, 0, 0.11, 0.045, 'triangle');
@@ -834,7 +844,7 @@
     buzz(8);
   }
   function soundWin(isBest) {
-    if (!audio.on) return;
+    if (!audible()) return;
     ensureAudio();
     var chord = isBest ? [0, 4, 7, 12, 16] : [0, 4, 7, 12];
     for (var i = 0; i < chord.length; i++) {
@@ -928,6 +938,12 @@
     return count;
   }
 
+  // Respect a reduced-motion preference for the purely decorative flourishes.
+  function reducedMotion() {
+    return typeof matchMedia === 'function' &&
+           matchMedia('(prefers-reduced-motion: reduce)').matches;
+  }
+
   function lineColour() {
     return state.solved ? 'var(--good)' : state.revealed ? 'var(--dim)' : 'var(--path)';
   }
@@ -997,6 +1013,7 @@
     state.path.push(cell);
     state.inPath[cell] = 1;
     startClock();
+    clearHint();
     var number = state.engine.numAt[cell];
     if (number) {
       soundNumber(number - 1);
@@ -1021,6 +1038,7 @@
    * if the frames never run, nothing is lost.
    */
   function startSweep() {
+    if (reducedMotion()) return;
     var board = el('board'), trail = board.querySelector('#trail');
     if (!trail) return;
     var span = (state.path.length - 1) * U + 160;
@@ -1038,6 +1056,7 @@
     if (state.path.length <= 1) return;
     state.inPath[state.path.pop()] = 0;
     state.solved = false;
+    clearHint();
     setBanner(null);
     render();
   }
@@ -1072,6 +1091,35 @@
     }
   }
 
+  /*
+   * A short burst from the last cell, but only when a personal best is actually
+   * beaten -- it has to stay rare or it stops meaning anything. Particles live
+   * in the board's own SVG and the group is removed when it finishes.
+   */
+  function startConfetti(cell) {
+    if (reducedMotion()) return;
+    var board = el('board');
+    var group = node('g', { id: 'confetti' });
+    var colours = ['var(--accent)', 'var(--path)', 'var(--good)'];
+    var parts = [];
+    for (var i = 0; i < 18; i++) {
+      var angle = -Math.PI / 2 + (Math.random() - 0.5) * 2.4;
+      var speed = 190 + Math.random() * 250;
+      var bit = node('rect', {
+        x: -5, y: -5, width: 10, height: 10, rx: 2, fill: colours[i % colours.length]
+      });
+      group.appendChild(bit);
+      parts.push({
+        node: bit, x: cx(cell), y: cy(cell),
+        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        rot: Math.random() * 360, spin: (Math.random() - 0.5) * 720
+      });
+    }
+    board.appendChild(group);
+    var now = performance.now();
+    state.confetti = { group: group, parts: parts, start: now, last: now };
+  }
+
   // --------------------------------------------------------------- clock
 
   function fmt(ms) {
@@ -1103,6 +1151,27 @@
       }
       state.pops = alive;
     }
+    if (state.confetti) {
+      var cf = state.confetti, at = performance.now();
+      var dt = Math.min(0.05, (at - cf.last) / 1000);
+      cf.last = at;
+      var life = (at - cf.start) / 1000;
+      if (life > 1.15) {
+        if (cf.group.parentNode) cf.group.parentNode.removeChild(cf.group);
+        state.confetti = null;
+      } else {
+        for (var c = 0; c < cf.parts.length; c++) {
+          var bit = cf.parts[c];
+          bit.vy += 1500 * dt;
+          bit.x += bit.vx * dt;
+          bit.y += bit.vy * dt;
+          bit.rot += bit.spin * dt;
+          bit.node.setAttribute('transform',
+            'translate(' + bit.x + ',' + bit.y + ') rotate(' + bit.rot + ')');
+          bit.node.setAttribute('opacity', Math.max(0, 1 - life / 1.15));
+        }
+      }
+    }
     if (state.sweep) {
       var done = (performance.now() - state.sweep.start) / 800;
       if (done >= 1) {
@@ -1131,7 +1200,9 @@
   function recordBest() {
     if (state.revealed) return;
     var prev = Number(localStorage.getItem(bestKey()) || Infinity);
-    var isBest = state.elapsed < prev;
+    // A hinted solve counts for the session but never sets a record -- a best
+    // time you were walked through is not a time.
+    var isBest = state.elapsed < prev && state.hintsUsed === 0;
     if (isBest) localStorage.setItem(bestKey(), String(Math.round(state.elapsed)));
     showBest();
     state.session.solved++;
@@ -1142,9 +1213,25 @@
     soundWin(isBest);
     startSweep();
     var sub = null;
-    if (isFinite(prev)) sub = isBest ? 'beat ' + fmt(prev) : fmt(state.elapsed - prev) + ' off your best';
-    setBanner((isBest ? 'New best · ' : 'Solved in ') + fmt(state.elapsed), 'good', sub);
+    if (state.hintsUsed) {
+      sub = state.hintsUsed + (state.hintsUsed === 1 ? ' hint' : ' hints') + ' — not a record';
+    } else if (isFinite(prev)) {
+      sub = isBest ? 'beat ' + fmt(prev) : fmt(state.elapsed - prev) + ' off your best';
+    }
+    setBanner((isBest ? 'New best · ' : cheer() + ' · ') + fmt(state.elapsed), 'good', sub);
+    if (isBest && isFinite(prev)) startConfetti(state.path[state.path.length - 1]);
     if (state.autoNext) state.advanceTimer = setTimeout(newPuzzle, 1800);
+  }
+
+  // A little variety on the win line. Never the same one twice running, so it
+  // reads as acknowledgement rather than a stuck string.
+  var CHEERS = ['Nice.', 'Clean run.', 'Smooth.', 'Tidy.', 'Got it.', 'Locked in.'];
+  var lastCheer = -1;
+  function cheer() {
+    var pick = lastCheer;
+    while (pick === lastCheer && CHEERS.length > 1) pick = (Math.random() * CHEERS.length) | 0;
+    lastCheer = pick;
+    return CHEERS[pick];
   }
 
   function setBanner(text, kind, sub) {
@@ -1154,6 +1241,76 @@
     el('bannerText').style.color =
       kind === 'bad' ? 'var(--bad)' : kind === 'wait' ? 'var(--dim)' : 'var(--good)';
     b.classList.add('show');
+  }
+
+  /*
+   * Hints. Because the puzzle has exactly one solution, any path that can still
+   * be finished must be a prefix of it -- so checking the drawn path against
+   * the solution is both the "what next" test and the "are you already lost"
+   * test. If you are lost, the board resets and the hint points out the very
+   * first move instead.
+   */
+  function pathIsSalvageable() {
+    var sol = state.puzzle.solution;
+    if (state.path.length > sol.length) return false;
+    for (var i = 0; i < state.path.length; i++) {
+      if (state.path[i] !== sol[i]) return false;
+    }
+    return true;
+  }
+
+  function hint() {
+    if (!state.puzzle || state.solved || state.revealed) return;
+    clearTimeout(state.advanceTimer);
+    var sol = state.puzzle.solution;
+    var lost = !pathIsSalvageable();
+    if (lost) {
+      restart();
+      setBanner('Off track — back to the start', 'bad');
+      setTimeout(function () { setBanner(null); }, 1500);
+    }
+    // After a reset the path is empty, so the hint is the opening move.
+    var from = state.path.length ? state.path[state.path.length - 1] : sol[0];
+    var to = state.path.length ? sol[state.path.length] : sol[1];
+    if (to == null) return;
+    state.hintsUsed++;
+    showHint(from, to);
+    if (audible()) { ensureAudio(); tone(880, 0, 0.07, 0.03, 'sine'); }
+  }
+
+  function clearHint() {
+    if (!state.hint) return;
+    if (state.hint.group.parentNode) state.hint.group.parentNode.removeChild(state.hint.group);
+    clearTimeout(state.hint.timer);
+    state.hint = null;
+  }
+
+  function showHint(from, to) {
+    clearHint();
+    var board = el('board'), p = state.puzzle;
+    var group = node('g', { id: 'hint' });
+    // The square to go to, and an arrow at the edge between the two pointing
+    // into it -- direction is the thing you actually need, not just a target.
+    group.appendChild(node('rect', {
+      x: (to % p.cols) * U + 6, y: ((to / p.cols) | 0) * U + 6,
+      width: U - 12, height: U - 12, rx: 12,
+      fill: 'var(--accent)', opacity: 0.22
+    }));
+    var dx = (to % p.cols) - (from % p.cols);
+    var dy = ((to / p.cols) | 0) - ((from / p.cols) | 0);
+    var mx = (cx(from) + cx(to)) / 2, my = (cy(from) + cy(to)) / 2;
+    var arrow = node('path', {
+      d: 'M -13 -15 L 8 0 L -13 15', fill: 'none', stroke: 'var(--accent)',
+      'stroke-width': 8, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+      transform: 'translate(' + mx + ',' + my + ') rotate(' +
+        (dx === 1 ? 0 : dx === -1 ? 180 : dy === 1 ? 90 : 270) + ')'
+    });
+    group.appendChild(arrow);
+    board.appendChild(group);
+    state.hint = {
+      group: group,
+      timer: setTimeout(function () { clearHint(); }, 2600)
+    };
   }
 
   // ------------------------------------------------------------- puzzles
@@ -1174,6 +1331,8 @@
     state.inPath = new Uint8Array(puzzle.rows * puzzle.cols);
     state.elapsed = 0; state.running = false; state.solved = false; state.revealed = false;
     drag.active = false; drag.tip = null; drag.settle = null; drag.at = null;
+    clearHint();
+    state.hintsUsed = 0;
     invalidateRect();
     setBanner(null);
     drawStatic();
@@ -1208,6 +1367,7 @@
     state.inPath.fill(0);
     state.elapsed = 0; state.running = false; state.solved = false; state.revealed = false;
     drag.tip = null; drag.settle = null;
+    clearHint();
     setBanner(null);
     render();
   }
@@ -1266,6 +1426,7 @@
 
   var board = el('board');
   board.addEventListener('pointerdown', function (e) {
+    state.interacted = true;
     invalidateRect();
     var v = toBoard(e.clientX, e.clientY);
     if (!v) return;
@@ -1319,6 +1480,7 @@
 
   var ARROWS = { ArrowLeft: [0, -1], ArrowRight: [0, 1], ArrowUp: [-1, 0], ArrowDown: [1, 0] };
   document.addEventListener('keydown', function (e) {
+    state.interacted = true;
     if (ARROWS[e.key]) {
       e.preventDefault();
       if (!state.path.length) { step(state.puzzle.waypoints[0]); return; }
@@ -1330,6 +1492,7 @@
     }
     var k = e.key.toLowerCase();
     if (k === 'u' || e.key === 'Backspace') { e.preventDefault(); pop(); }
+    else if (k === 'h') hint();
     else if (k === 'r') restart();
     else if (k === 'n') newPuzzle();
   });
@@ -1337,6 +1500,7 @@
   el('newBtn').onclick = newPuzzle;
   el('restartBtn').onclick = restart;
   el('undoBtn').onclick = pop;
+  el('hintBtn').onclick = hint;
   el('revealBtn').onclick = function () {
     clearTimeout(state.advanceTimer);
     stopClock();
@@ -1363,18 +1527,22 @@
     applyTheme();
   };
 
+  var SOUND_LABEL = { all: 'Sound: every step', sparse: 'Sound: numbers and wins', off: 'Sound: off' };
   function applySound() {
-    el('soundBtn').setAttribute('aria-pressed', String(audio.on));
-    el('soundBtn').setAttribute('title', audio.on ? 'Sound on' : 'Sound off');
-    var wave = document.getElementById('soundWave'), mute = document.getElementById('soundMute');
-    if (wave) wave.style.display = audio.on ? '' : 'none';
-    if (mute) mute.style.display = audio.on ? 'none' : '';
+    el('soundBtn').setAttribute('aria-pressed', String(audible()));
+    el('soundBtn').setAttribute('title', SOUND_LABEL[audio.mode]);
+    var near = document.getElementById('soundWave');
+    var far = document.getElementById('soundWaveFar');
+    var mute = document.getElementById('soundMute');
+    if (near) near.style.display = audible() ? '' : 'none';
+    if (far) far.style.display = audio.mode === 'all' ? '' : 'none';
+    if (mute) mute.style.display = audible() ? 'none' : '';
   }
   el('soundBtn').onclick = function () {
-    audio.on = !audio.on;
-    localStorage.setItem('zip.sound', audio.on ? 'on' : 'off');
+    audio.mode = SOUND_MODES[(SOUND_MODES.indexOf(audio.mode) + 1) % SOUND_MODES.length];
+    localStorage.setItem('zip.sound', audio.mode);
     applySound();
-    if (audio.on) { ensureAudio(); tone(660, 0, 0.09, 0.04, 'triangle'); }
+    if (audible()) { ensureAudio(); tone(660, 0, 0.09, 0.04, 'triangle'); }
   };
 
   function applyAuto() {
@@ -1417,7 +1585,7 @@
   if (location.search.indexOf('test') >= 0) {
     window.__zip = {
       state: state, step: step, load: load, cellAt: cellAt,
-      newPuzzle: newPuzzle, restart: restart, U: U, PAD: PAD, audio: audio
+      newPuzzle: newPuzzle, restart: restart, hint: hint, U: U, PAD: PAD, audio: audio
     };
   }
 })();

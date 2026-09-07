@@ -9,19 +9,49 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const CHROME = process.env.CHROME ||
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// Look where Chrome actually lives on a dev Mac and on a CI runner, so the
+// browser tests run in both without configuration.
+const CANDIDATES = [
+  process.env.CHROME,
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Chromium.app/Contents/MacOS/Chromium',
+  '/usr/bin/google-chrome',
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/chromium-browser',
+  '/usr/bin/chromium'
+].filter(Boolean);
+
+function findChrome() {
+  return CANDIDATES.find(p => { try { return fs.existsSync(p); } catch { return false; } }) || null;
+}
+const CHROME = findChrome();
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function launch({ port = 9333 } = {}) {
-  if (!fs.existsSync(CHROME)) throw new Error('Chrome not found at ' + CHROME);
+async function launch() {
+  if (!CHROME) throw new Error('no Chrome found; tried:\n  ' + CANDIDATES.join('\n  '));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'zip-cdp-'));
   const proc = spawn(CHROME, [
     '--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--hide-scrollbars', '--force-device-scale-factor=2',
-    '--remote-debugging-port=' + port, '--user-data-dir=' + profile, 'about:blank'
+    '--no-sandbox', '--disable-dev-shm-usage',      // CI runners need both
+    '--autoplay-policy=no-user-gesture-required',
+    '--remote-debugging-port=0', '--user-data-dir=' + profile, 'about:blank'
   ], { stdio: ['ignore', 'ignore', 'ignore'] });
+
+  // Port 0 means "pick a free one"; Chrome writes the choice into the profile.
+  // Fixed ports let a run silently attach to a browser a previous run left
+  // behind, inheriting its console history.
+  const portFile = path.join(profile, 'DevToolsActivePort');
+  let port = null;
+  for (let i = 0; i < 150 && port === null; i++) {
+    await sleep(100);
+    try {
+      const line = fs.readFileSync(portFile, 'utf8').split('\n')[0];
+      if (line) port = parseInt(line, 10);
+    } catch { /* not written yet */ }
+  }
+  if (!port) { proc.kill(); throw new Error('Chrome never reported a debugging port'); }
 
   let target = null;
   for (let i = 0; i < 100 && !target; i++) {
@@ -36,7 +66,22 @@ async function launch({ port = 9333 } = {}) {
   const ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej; });
 
+  function errorText(msg) {
+    if (msg.method === 'Runtime.exceptionThrown') {
+      const d = msg.params.exceptionDetails;
+      return (d.exception && d.exception.description) || d.text;
+    }
+    if (msg.method === 'Log.entryAdded' && msg.params.entry.level === 'error') {
+      return msg.params.entry.text;
+    }
+    if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
+      return msg.params.args.map(a => (a.value != null ? a.value : a.description)).join(' ');
+    }
+    return null;
+  }
+
   let id = 0;
+  const collected = [];
   const pending = new Map();
   const events = [];
   const waiters = [];
@@ -47,6 +92,8 @@ async function launch({ port = 9333 } = {}) {
       if (p) (msg.error ? p.rej(new Error(msg.error.message)) : p.res(msg.result));
     } else {
       events.push(msg);
+      var err = errorText(msg);
+      if (err) collected.push(err);
       for (const w of waiters.splice(0)) w(msg);
     }
   };
@@ -58,10 +105,12 @@ async function launch({ port = 9333 } = {}) {
 
   const page = {
     send, events,
-    consoleErrors: [],
+    get consoleErrors() { return collected; },
+    clearErrors() { collected.length = 0; },
     async close() { ws.close(); proc.kill(); try { fs.rmSync(profile, { recursive: true, force: true }); } catch {} },
 
-    async setup({ width = 560, height = 960, mobile = false, scheme = 'light' } = {}) {
+    async setup({ width = 560, height = 960, mobile = false, scheme = 'light',
+                  reducedMotion = false } = {}) {
       await send('Page.enable');
       await send('Runtime.enable');
       await send('Log.enable');
@@ -69,27 +118,17 @@ async function launch({ port = 9333 } = {}) {
         width, height, deviceScaleFactor: 2, mobile
       });
       await send('Emulation.setEmulatedMedia', {
-        features: [{ name: 'prefers-color-scheme', value: scheme }]
+        features: [
+          { name: 'prefers-color-scheme', value: scheme },
+          { name: 'prefers-reduced-motion', value: reducedMotion ? 'reduce' : 'no-preference' }
+        ]
       });
       if (mobile) await send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
     },
 
     async goto(url) {
       await send('Page.navigate', { url });
-      // Runtime/Log events carry anything the page complained about.
       await sleep(600);
-      for (const e of events) {
-        if (e.method === 'Runtime.exceptionThrown') {
-          page.consoleErrors.push(e.params.exceptionDetails.exception?.description ||
-                                  e.params.exceptionDetails.text);
-        }
-        if (e.method === 'Log.entryAdded' && e.params.entry.level === 'error') {
-          page.consoleErrors.push(e.params.entry.text);
-        }
-        if (e.method === 'Runtime.consoleAPICalled' && e.params.type === 'error') {
-          page.consoleErrors.push(e.params.args.map(a => a.value ?? a.description).join(' '));
-        }
-      }
     },
 
     async eval(expr) {
@@ -126,4 +165,4 @@ async function launch({ port = 9333 } = {}) {
   return page;
 }
 
-module.exports = { launch, sleep };
+module.exports = { launch, sleep, findChrome };

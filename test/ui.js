@@ -52,9 +52,9 @@ function makeDom() {
   }
 
   const ids = ['clock', 'tiers', 'board', 'banner', 'bannerText', 'newBtn', 'restartBtn',
-               'undoBtn', 'revealBtn', 'filled', 'total', 'tierStats', 'best',
+               'undoBtn', 'hintBtn', 'revealBtn', 'filled', 'total', 'tierStats', 'best',
                'progressFill', 'themeBtn', 'autoBtn', 'session', 'soundBtn',
-               'soundWave', 'soundMute'];
+               'soundWave', 'soundWaveFar', 'soundMute'];
   for (const id of ids) { const e = makeEl('div'); e.setAttribute('id', id); }
   const root = makeEl('html');
   root.removeAttribute = k => { delete root._attrs; };
@@ -185,8 +185,8 @@ for (const tier of ['easy', 'medium', 'hard', 'expert']) {
       ok(filled === n, `${tier}#${i}/${name}: drag filled ${filled} of ${n} cells`);
       const banner = dom.byId.get('banner');
       ok(banner.classes.has('show'), `${tier}#${i}/${name}: no win banner`);
-      ok(/Solved|best/i.test(dom.byId.get('bannerText')._html),
-         `${tier}#${i}/${name}: banner said "${dom.byId.get('bannerText')._html}"`);
+      ok(/\d:\d\d\.\d/.test(dom.byId.get('bannerText')._html),
+         `${tier}#${i}/${name}: win banner has no time: "${dom.byId.get('bannerText')._html}"`);
       ok(dom.byId.get('clock').classes.has('done'), `${tier}#${i}/${name}: clock not stopped`);
       ok(/^\d+:\d\d\.\d$/.test(dom.byId.get('clock').textContent),
          `${tier}#${i}/${name}: clock reads "${dom.byId.get('clock').textContent}"`);

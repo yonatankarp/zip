@@ -4,13 +4,10 @@
  * input -- the one thing the DOM stub in ui.js cannot prove. Skips cleanly if
  * Chrome is not installed. Pass --shots <dir> to also write screenshots.
  */
-const fs = require('fs');
-const { launch, sleep } = require('./browser.js');
+const { launch, sleep, findChrome } = require('./browser.js');
 
-const CHROME = process.env.CHROME ||
-  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-if (!fs.existsSync(CHROME)) {
-  console.log('render  skipped — Chrome not found (set CHROME=/path/to/chrome)');
+if (!findChrome()) {
+  console.log('render  skipped — no Chrome found (set CHROME=/path/to/chrome)');
   process.exit(0);
 }
 
@@ -147,7 +144,7 @@ const POINTS = `
     };`);
     ok(after.filled === 36, `mouse drag filled ${after.filled} of 36`);
     ok(/show/.test(after.banner), 'no win banner after a real drag');
-    ok(/Solved|best/i.test(after.text), `banner said "${after.text}"`);
+    ok(/\d:\d\d\.\d/.test(after.text), `win banner has no time in it: "${after.text}"`);
     ok(/done/.test(after.clock), 'clock did not stop on the win');
     ok(after.progress === '100%', `progress bar at ${after.progress}`);
     ok(page.consoleErrors.length === 0, `drag produced console errors: ${page.consoleErrors.join(' | ')}`);
@@ -273,7 +270,7 @@ const POINTS = `
     const pts = await page.eval(POINTS);
 
     // Audio only starts on a user gesture; a real mouse press is one.
-    ok(await page.eval('return window.__zip.audio.on === true'), 'sound is not on by default');
+    ok(await page.eval("return window.__zip.audio.mode === 'all'"), 'sound does not default to all');
     ok(await page.eval('return window.__zip.audio.ctx === null'),
        'an AudioContext was built before any gesture');
     await page.mouse('mousePressed', pts[0].x, pts[0].y);
@@ -307,13 +304,182 @@ const POINTS = `
     ok(await page.eval("return !document.getElementById('shine')"), 'win sweep never cleaned up');
     ok(page.consoleErrors.length === 0, `sound/animation errors: ${page.consoleErrors.join(' | ')}`);
 
-    // Muting persists and swaps the icon.
-    await page.eval("document.getElementById('soundBtn').click(); return 1");
-    ok(await page.eval("return localStorage.getItem('zip.sound') === 'off'"), 'mute not persisted');
-    ok(await page.eval("return document.getElementById('soundWave').style.display === 'none'"),
-       'muting did not swap the speaker icon');
-    ok(await page.eval("return document.getElementById('soundBtn').getAttribute('aria-pressed') === 'false'"),
-       'mute button state not reflected');
+    // The speaker cycles all -> sparse -> off -> all, persisting each step, and
+    // the icon shows which of the three you are in.
+    const cycle = [
+      ['sparse', { near: '', far: 'none', mute: 'none' }, 'true'],
+      ['off',    { near: 'none', far: 'none', mute: '' }, 'false'],
+      ['all',    { near: '', far: '', mute: 'none' }, 'true']
+    ];
+    for (const [mode, icon, pressed] of cycle) {
+      await page.eval("document.getElementById('soundBtn').click(); return 1");
+      ok(await page.eval(`return localStorage.getItem('zip.sound') === '${mode}'`),
+         `sound mode did not persist as ${mode}`);
+      ok(await page.eval(`return window.__zip.audio.mode === '${mode}'`), `mode is not ${mode}`);
+      const shown = await page.eval(`return {
+        near: document.getElementById('soundWave').style.display,
+        far: document.getElementById('soundWaveFar').style.display,
+        mute: document.getElementById('soundMute').style.display,
+        pressed: document.getElementById('soundBtn').getAttribute('aria-pressed')
+      };`);
+      ok(shown.near === icon.near && shown.far === icon.far && shown.mute === icon.mute,
+         `${mode}: icon shows ${JSON.stringify(shown)}, expected ${JSON.stringify(icon)}`);
+      ok(shown.pressed === pressed, `${mode}: aria-pressed is ${shown.pressed}`);
+    }
+    await page.close();
+  }
+
+  // --- confetti fires on a personal best, and only then ---------------------
+  {
+    const page = await launch({ port: port++ });
+    await page.setup({ scheme: 'dark', width: 520, height: 900 });
+    await page.goto(URL);
+    // A prior best on record, so beating it is a genuine improvement rather
+    // than a first solve -- that is the only case that earns a burst.
+    await page.eval("localStorage.setItem('zip.best.medium', '999999'); return 1");
+    await page.eval("window.__zip.load(Zip.generateDifficulty('medium', 1212)); return 1");
+    let pts = await page.eval(POINTS);
+    await page.drag(pts);
+    await sleep(120);
+    ok(await page.eval("return !!document.getElementById('confetti')"), 'no burst on a personal best');
+    const bits = await page.eval("return document.querySelectorAll('#confetti rect').length");
+    ok(bits === 18, `burst has ${bits} pieces`);
+    const moved = await page.eval(`
+      var a = document.querySelectorAll('#confetti rect')[0].getAttribute('transform');
+      return !!a && a.indexOf('translate') === 0;`);
+    ok(moved, 'burst pieces are not being moved');
+    await sleep(1400);
+    ok(await page.eval("return !document.getElementById('confetti')"), 'burst never cleaned up');
+    await page.close();
+  }
+
+  // --- reduced motion drops the decoration, keeps the game ------------------
+  {
+    const page = await launch({ port: port++ });
+    await page.setup({ scheme: 'dark', width: 520, height: 900, reducedMotion: true });
+    await page.goto(URL);
+    await page.eval("localStorage.setItem('zip.best.medium', '999999'); return 1");
+    await page.eval("window.__zip.load(Zip.generateDifficulty('medium', 1212)); return 1");
+    const pts = await page.eval(POINTS);
+    await page.drag(pts);
+    await sleep(150);
+    ok(await page.eval("return !document.getElementById('shine')"),
+       'win sweep ran despite prefers-reduced-motion');
+    ok(await page.eval("return !document.getElementById('confetti')"),
+       'burst ran despite prefers-reduced-motion');
+    // The game itself must be unaffected.
+    const won = await page.eval(`return {
+      filled: Number(document.getElementById('filled').textContent),
+      banner: document.getElementById('banner').className
+    };`);
+    ok(won.filled === 36, `reduced motion broke the solve (${won.filled}/36)`);
+    ok(/show/.test(won.banner), 'reduced motion suppressed the win banner');
+    await page.close();
+  }
+
+  // --- hints: next move, direction, and rescuing a lost board ---------------
+  {
+    const page = await launch({ port: port++ });
+    await page.setup({ scheme: 'dark', width: 520, height: 900 });
+    await page.goto(URL);
+    await page.eval("window.__zip.load(Zip.generateDifficulty('medium', 606)); return 1");
+
+    const dirOf = `
+      function dirOf(from, to, cols) {
+        var dx = (to % cols) - (from % cols), dy = ((to / cols) | 0) - ((from / cols) | 0);
+        return dx === 1 ? 0 : dx === -1 ? 180 : dy === 1 ? 90 : 270;
+      }`;
+    const readHint = `
+      var g = document.getElementById('hint');
+      if (!g) return null;
+      var arrow = g.querySelector('path'), rect = g.querySelector('rect');
+      // Parsed by hand: a regex here would sit inside a template literal and
+      // lose its backslashes before it ever reached the page.
+      var rot = parseFloat(arrow.getAttribute('transform').split('rotate(')[1]);
+      var p = window.__zip.state.puzzle;
+      var col = Math.round((parseFloat(rect.getAttribute('x')) - 6) / 100);
+      var row = Math.round((parseFloat(rect.getAttribute('y')) - 6) / 100);
+      return { rotate: rot, target: row * p.cols + col };`;
+
+    // On an untouched board the hint is the opening move.
+    await page.eval('window.__zip.hint(); return 1');
+    let h = await page.eval(readHint);
+    let want = await page.eval(dirOf + `
+      var s = window.__zip.state.puzzle;
+      return { target: s.solution[1], rotate: dirOf(s.solution[0], s.solution[1], s.cols) };`);
+    ok(h !== null, 'no hint drawn on an empty board');
+    ok(h && h.target === want.target, `opening hint points at ${h && h.target}, expected ${want.target}`);
+    ok(h && h.rotate === want.rotate, `opening arrow rotated ${h && h.rotate}, expected ${want.rotate}`);
+
+    // Part-way along the real solution, it points at the next cell.
+    await page.eval('var z=window.__zip,s=z.state.puzzle.solution;for(var i=0;i<5;i++)z.step(s[i]);return 1');
+    ok(await page.eval("return !document.getElementById('hint')"), 'hint did not clear when the player moved');
+    await page.eval('window.__zip.hint(); return 1');
+    h = await page.eval(readHint);
+    want = await page.eval(dirOf + `
+      var z = window.__zip, s = z.state.puzzle, n = z.state.path.length;
+      return { target: s.solution[n], rotate: dirOf(s.solution[n - 1], s.solution[n], s.cols) };`);
+    ok(h && h.target === want.target, `hint points at ${h && h.target}, expected ${want.target}`);
+    ok(h && h.rotate === want.rotate, `arrow rotated ${h && h.rotate}, expected ${want.rotate}`);
+
+    // Step somewhere legal but wrong: the board is now unfinishable, so the
+    // hint must reset it and show the opening move again.
+    // Walk the solution looking for the first place a legal-but-wrong move
+    // exists, and take it. Not every square offers one -- walls often leave a
+    // single continuation -- so this has to search rather than assume.
+    const wrong = await page.eval(`
+      var z = window.__zip, st = z.state, eng = st.engine, sol = st.puzzle.solution;
+      z.restart();
+      z.step(sol[0]);
+      for (var i = 1; i < sol.length; i++) {
+        var head = st.path[st.path.length - 1], adj = eng.adj[head];
+        for (var j = 0; j < adj.length; j++) {
+          var c = adj[j];
+          if (c !== sol[i] && eng.canStep(st.path, st.inPath, c)) { z.step(c); return i; }
+        }
+        z.step(sol[i]);
+      }
+      return -1;`);
+    ok(wrong >= 0, 'could not construct an off-track path anywhere in the solution');
+    const beforeReset = await page.eval("return Number(document.getElementById('filled').textContent)");
+    ok(beforeReset > 1, `off-track path only ${beforeReset} long`);
+    await page.eval('window.__zip.hint(); return 1');
+    const afterReset = await page.eval("return Number(document.getElementById('filled').textContent)");
+    ok(afterReset === 0, `an off-track board was not reset (${afterReset} cells still drawn)`);
+    ok(/Off track/i.test(await page.eval("return document.getElementById('bannerText').textContent")),
+       'no explanation given when the board was reset');
+    h = await page.eval(readHint);
+    want = await page.eval(dirOf + `
+      var s = window.__zip.state.puzzle;
+      return { target: s.solution[1], rotate: dirOf(s.solution[0], s.solution[1], s.cols) };`);
+    ok(h && h.target === want.target, 'hint after a reset does not show the opening move');
+
+    // The hint fades on its own.
+    await sleep(2900);
+    ok(await page.eval("return !document.getElementById('hint')"), 'hint never faded');
+    ok(page.consoleErrors.length === 0, `hint errors: ${page.consoleErrors.join(' | ')}`);
+    await page.close();
+  }
+
+  // --- a hinted solve never sets a record -----------------------------------
+  {
+    const page = await launch({ port: port++ });
+    await page.setup({ scheme: 'dark', width: 520, height: 900 });
+    await page.goto(URL);
+    await page.eval("localStorage.setItem('zip.best.medium', '999999'); return 1");
+    await page.eval("window.__zip.load(Zip.generateDifficulty('medium', 707)); return 1");
+    await page.eval('window.__zip.hint(); return 1');
+    const pts = await page.eval(POINTS);
+    await page.drag(pts);
+    await sleep(150);
+    const out = await page.eval(`return {
+      best: localStorage.getItem('zip.best.medium'),
+      sub: document.getElementById('bannerText').textContent,
+      confetti: !!document.getElementById('confetti')
+    };`);
+    ok(out.best === '999999', `a hinted solve overwrote the best time (now ${out.best})`);
+    ok(/hint/i.test(out.sub), `banner did not mention the hint: "${out.sub}"`);
+    ok(!out.confetti, 'a hinted solve threw confetti');
     await page.close();
   }
 

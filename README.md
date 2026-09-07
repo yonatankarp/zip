@@ -15,19 +15,16 @@ node test/ui.js        # the UI under a DOM stub, driven through its own handler
 node test/render.js    # the page in real headless Chrome, driven by real input
 ```
 
-## Deploying to GitHub Pages
+## Deploying
 
-`index.html` sits at the repository root, so Pages serves it with no build and
-no workflow:
+`.github/workflows/deploy.yml` runs the full suite on every push to `main` and
+publishes to GitHub Pages only if it passes. Set **Settings → Pages → Source**
+to **GitHub Actions** once; there is nothing to build, so the deploy job just
+uploads the repository as-is.
 
-1. Push this repository to GitHub.
-2. **Settings → Pages → Build and deployment → Source: Deploy from a branch**,
-   branch `main`, folder `/ (root)`.
-3. It goes live at `https://<user>.github.io/<repo>/` within a minute or so.
-
-`.nojekyll` is committed so Pages copies files verbatim instead of running them
-through Jekyll. Nothing else is required — the page pulls no fonts, scripts, or
-images from anywhere, so it works offline and over any static host.
+`.nojekyll` keeps Pages from running the files through Jekyll. The page pulls no
+fonts, scripts, or images from anywhere, so it also works offline, from
+`file://`, and on any other static host.
 
 ## The rules
 
@@ -97,6 +94,12 @@ any cell already on the path rewinds to it. Arrow keys move the head,
 
 A few things exist specifically for drilling speed:
 
+- **Hint** (<kbd>H</kbd>) points out the next move. Because the puzzle has
+  exactly one solution, any path that can still be finished must be a prefix of
+  it — so the same check answers both "what next" and "am I already lost". If
+  the line has gone somewhere unfinishable, the board resets and the hint shows
+  the opening move instead of pretending the position is recoverable. A hinted
+  solve still counts for the session but never sets a record.
 - **Auto-next** loads the next puzzle 1.8 s after a solve, so a session is a
   continuous run rather than a click between every rep. Toggle it off if you
   would rather study the finished board.
