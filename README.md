@@ -45,6 +45,27 @@ Source** to **GitHub Actions** once.
 `public/.nojekyll` keeps Pages from running the output through Jekyll. The page
 still pulls no fonts, images, or scripts from any other host.
 
+## Daily and practice
+
+**Daily** is one shared board per UTC date — the same puzzle for everyone,
+straight from the seeded generator, with no server involved. The result is
+recorded once (replaying does not overwrite it), a streak counts consecutive
+days and stands until a day is actually missed, and the result copies to the
+clipboard as a share line:
+
+```
+Zip #250 — 0:41.3
+↩ 3 backtracks · 🔥 5 day streak
+https://yonatankarp.com/zip/
+```
+
+**Practice** is the endless generator with the four difficulty tiers, auto-next,
+and best times.
+
+Both count **backtracks** — single-square retractions — the way the original
+reports them. It is a better measure of a run than time alone, because it counts
+how much you guessed.
+
 ## The rules
 
 Draw one continuous path that visits **every** cell exactly once, starting at
@@ -63,13 +84,13 @@ constraints until it is the *only* solution.
    the obvious alternative but is heavily biased toward boundary-hugging snakes,
    which makes every puzzle feel the same.
 
-2. **Constrain until unique.** Count solutions (capped at 2). If a rival solution
-   exists it must use some edge the intended path does not — walling that edge
-   kills the rival and provably cannot invalidate the intended path. Walls are
-   the cheap constraint so they go in first; numbers are added only when the wall
-   budget runs out. This is what makes generation practical: with randomly placed
-   numbers alone, *zero* of 120 sampled 7×7 grids were uniquely solvable. With
-   adaptive walls the yield is 100% at every size.
+2. **Constrain until unique.** Drop the tier's full complement of numbers on the
+   path, then count solutions (capped at 2). If a rival solution exists it must
+   use some edge the intended path does not — walling that edge kills the rival
+   and provably cannot invalidate the intended path. Walls are spent only on the
+   ambiguity the numbers leave behind. Both levers are needed: with randomly
+   placed numbers and no walls at all, *zero* of 120 sampled 7×7 grids were
+   uniquely solvable.
 
 3. **Measure the difficulty, don't assume it.** "Fewer numbers = harder" is
    directionally true but varies wildly inside a tier, which is exactly what
@@ -82,12 +103,20 @@ constraints until it is the *only* solution.
 
 ## Tiers
 
-| Tier   | Grid | Decision points | ~walls | ~numbers | gen time |
-|--------|------|-----------------|--------|----------|----------|
-| Easy   | 5×5  | 0–2             | 4      | 7        | 2 ms     |
-| Medium | 6×6  | 3–6             | 6      | 7        | 7 ms     |
-| Hard   | 7×7  | 7–11            | 10     | 6        | 38 ms    |
-| Expert | 8×8  | 12+             | 18     | 6        | 185 ms   |
+| Tier   | Grid | Decision points | ~numbers | ~walls | gen time |
+|--------|------|-----------------|----------|--------|----------|
+| Easy   | 5×5  | 1–4             | 6        | 4      | 1 ms     |
+| Medium | 6×6  | 5–8             | 8        | 5      | 2 ms     |
+| Hard   | 7×7  | 9–13            | 12       | 5      | 13 ms    |
+| Expert | 8×8  | 14+             | 15       | 6      | 64 ms    |
+
+Numbers are the primary constraint and walls are spent only on the ambiguity
+that remains. An earlier version had it the other way round, which was cheaper
+to generate but produced boards nothing like the original: five numbers fenced
+in by eighteen walls. Putting numbers first gives a dense, lightly-walled board
+*and* a harder one — fewer walls means more freedom, so measured decision points
+went up as the number count did — and it made generation three times faster,
+because numbers prune the search better than walls.
 
 The next puzzle is generated in the background while you play the current one,
 so there is no wait between puzzles.

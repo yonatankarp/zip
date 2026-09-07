@@ -14,8 +14,14 @@ import {
 import { BoardView, U, type Tip } from './board.ts';
 import { Audio, SOUND_MODES, type SoundMode } from './audio.ts';
 import { Fx } from './fx.ts';
+import {
+  DAILY_TIER, dayNumber, readResult, seedForDay, shareText, streak, writeResult,
+  type DailyResult
+} from './daily.ts';
 
 export type Theme = 'system' | 'light' | 'dark';
+/** Daily is one shared board per UTC day; practice is the endless generator. */
+export type Mode = 'daily' | 'practice';
 export type BannerKind = 'good' | 'bad' | 'wait';
 
 export interface Banner {
@@ -27,6 +33,11 @@ export interface Banner {
 export interface Snapshot {
   ready: boolean;
   busy: boolean;
+  mode: Mode;
+  day: number;
+  dailyResult: DailyResult | null;
+  streak: number;
+  backtracks: number;
   rows: number;
   cols: number;
   difficulty: DifficultyName;
@@ -79,6 +90,8 @@ export class GameCore {
   private solved = false;
   private revealed = false;
   private hintsUsed = 0;
+  /** Single-cell retractions, the way the original counts them. */
+  private backtracks = 0;
   private busy = false;
   private banner: Banner | null = null;
   private lastCheer = -1;
@@ -90,12 +103,21 @@ export class GameCore {
 
   private frame = 0;
   private alive = false;
+  /*
+   * Generation is deferred a frame so the board can paint first, which means a
+   * result can arrive after something else has already been loaded -- switch
+   * difficulty twice quickly and the first generation would land on top of the
+   * second. Every load claims a token; a stale generation drops its result.
+   */
+  private loadSeq = 0;
   private dirty = true;
   private listeners = new Set<(s: Snapshot) => void>();
   private detachers: Array<() => void> = [];
 
   readonly audio: Audio;
   difficulty: DifficultyName;
+  mode: Mode;
+  day = dayNumber();
   autoNext: boolean;
   theme: Theme;
   session = { solved: 0, total: 0, streak: 0 };
@@ -109,6 +131,7 @@ export class GameCore {
     this.audio = new Audio(mode);
     this.difficulty = (localStorage.getItem('zip.difficulty') as DifficultyName) ?? 'medium';
     if (!DIFFICULTIES[this.difficulty]) this.difficulty = 'medium';
+    this.mode = localStorage.getItem('zip.mode') === 'practice' ? 'practice' : 'daily';
     this.autoNext = localStorage.getItem('zip.autoNext') !== 'off';
     this.theme = (localStorage.getItem('zip.theme') as Theme) ?? 'system';
     this.applyTheme();
@@ -170,15 +193,25 @@ export class GameCore {
 
   private markDirty(): void { this.dirty = true; }
 
+  /** The daily is one fixed size; practice follows the chosen tier. */
+  private tier(): DifficultyName {
+    return this.mode === 'daily' ? DAILY_TIER : this.difficulty;
+  }
+
   snapshot(): Snapshot {
-    const preset = DIFFICULTIES[this.difficulty];
+    const preset = DIFFICULTIES[this.tier()];
     const best = localStorage.getItem(this.bestKey());
     return {
       ready: !!this.puzzle,
       busy: this.busy,
+      mode: this.mode,
+      day: this.day,
+      dailyResult: readResult(this.day),
+      streak: streak(this.day),
+      backtracks: this.backtracks,
       rows: this.puzzle?.rows ?? preset.rows,
       cols: this.puzzle?.cols ?? preset.cols,
-      difficulty: this.difficulty,
+      difficulty: this.tier(),
       difficultyLabel: preset.label,
       filled: this.path.length,
       total: this.puzzle ? this.puzzle.rows * this.puzzle.cols : preset.rows * preset.cols,
@@ -264,6 +297,7 @@ export class GameCore {
   private pop(): void {
     if (this.path.length <= 1) return;
     this.inPath[this.path.pop()!] = 0;
+    this.backtracks++;
     this.solved = false;
     this.board?.clearHint();
     this.setBanner(null);
@@ -318,26 +352,46 @@ export class GameCore {
 
   private recordSolve(): void {
     if (this.revealed) return;
-    const previous = Number(localStorage.getItem(this.bestKey()) ?? Infinity);
-    // A hinted solve counts for the session but never sets a record -- a best
-    // time you were walked through is not a time.
-    const isBest = this.elapsed < previous && this.hintsUsed === 0;
-    if (isBest) localStorage.setItem(this.bestKey(), String(Math.round(this.elapsed)));
-
     this.session.solved++;
     this.session.total += this.elapsed;
     this.session.streak++;
 
-    let sub: string | undefined;
-    if (this.hintsUsed) {
-      sub = `${this.hintsUsed} ${this.hintsUsed === 1 ? 'hint' : 'hints'} — not a record`;
-    } else if (Number.isFinite(previous)) {
-      sub = isBest ? `beat ${formatTime(previous)}` : `${formatTime(this.elapsed - previous)} off your best`;
+    const backtracks = `${this.backtracks} backtrack${this.backtracks === 1 ? '' : 's'}`;
+    let isBest = false;
+
+    if (this.mode === 'daily') {
+      // Only the first solve of the day is recorded; replaying does not
+      // overwrite it, so the shared result stays honest.
+      const first = !readResult(this.day);
+      writeResult({
+        day: this.day, ms: Math.round(this.elapsed),
+        backtracks: this.backtracks, hinted: this.hintsUsed > 0
+      });
+      const days = streak(this.day);
+      this.setBanner({
+        text: `Daily #${this.day} · ${formatTime(this.elapsed)}`,
+        kind: 'good',
+        sub: `${backtracks}${this.hintsUsed ? ' · used a hint' : ''}` +
+          (first && days >= 2 ? ` · ${days} day streak` : first ? '' : ' · already logged today')
+      });
+    } else {
+      const previous = Number(localStorage.getItem(this.bestKey()) ?? Infinity);
+      // A hinted solve counts for the session but never sets a record -- a best
+      // time you were walked through is not a time.
+      isBest = this.elapsed < previous && this.hintsUsed === 0;
+      if (isBest) localStorage.setItem(this.bestKey(), String(Math.round(this.elapsed)));
+
+      let sub: string | undefined;
+      if (this.hintsUsed) {
+        sub = `${this.hintsUsed} ${this.hintsUsed === 1 ? 'hint' : 'hints'} — not a record`;
+      } else if (Number.isFinite(previous)) {
+        sub = isBest ? `beat ${formatTime(previous)}` : `${formatTime(this.elapsed - previous)} off your best`;
+      }
+      this.setBanner({
+        text: `${isBest ? 'New best · ' : `${this.cheer()} · `}${formatTime(this.elapsed)}`,
+        kind: 'good', sub: sub ? `${backtracks} · ${sub}` : backtracks
+      });
     }
-    this.setBanner({
-      text: `${isBest ? 'New best · ' : `${this.cheer()} · `}${formatTime(this.elapsed)}`,
-      kind: 'good', sub
-    });
 
     this.audio.win(isBest);
     if (!reducedMotion()) {
@@ -347,7 +401,8 @@ export class GameCore {
       const rect = this.board?.rectInViewport();
       if (origin && rect) this.fx?.celebrate(origin, rect, isBest);
     }
-    if (this.autoNext) {
+    // Auto-next belongs to practice: there is only one puzzle a day.
+    if (this.autoNext && this.mode === 'practice') {
       this.advanceTimer = window.setTimeout(() => this.newPuzzle(), AUTO_NEXT_DELAY);
     }
   }
@@ -369,6 +424,8 @@ export class GameCore {
   }
 
   private load(puzzle: Puzzle): void {
+    this.loadSeq++;
+    this.busy = false;                         // a loaded board is never busy
     this.puzzle = puzzle;
     this.engine = makeEngine(puzzle);
     this.path = [];
@@ -379,6 +436,7 @@ export class GameCore {
     this.solved = false;
     this.revealed = false;
     this.hintsUsed = 0;
+    this.backtracks = 0;
     this.drag = { active: false, at: null, tip: null, settle: null };
     this.fx?.clear();
     this.setBanner(null);
@@ -388,6 +446,7 @@ export class GameCore {
 
   newPuzzle(): void {
     clearTimeout(this.advanceTimer);
+    if (this.mode === 'daily') { this.loadDaily(); return; }
     const ready = this.prefetchedFor === this.difficulty ? this.prefetched : null;
     this.prefetched = null;
     this.prefetchedFor = null;
@@ -396,14 +455,48 @@ export class GameCore {
     this.busy = true;
     this.setBanner({ text: 'Generating…', kind: 'wait' });
     this.publish();
+    const seq = this.loadSeq;
     window.setTimeout(() => {                  // let the frame paint before we block
-      if (!this.alive) return;
+      if (!this.alive || seq !== this.loadSeq) return;   // superseded
       const puzzle = generateDifficulty(this.difficulty);
+      if (seq !== this.loadSeq) return;
       this.busy = false;
       this.setBanner(null);
       if (puzzle) this.load(puzzle);
       this.prefetch();
     }, 16);
+  }
+
+  /*
+   * The same board for everyone on the same UTC date, straight from the seeded
+   * generator -- no server, no fetch. Reloading it is how "New" behaves in
+   * daily mode, since there is nothing else to move on to.
+   */
+  private loadDaily(): void {
+    this.day = dayNumber();
+    const puzzle = generateDifficulty(DAILY_TIER, seedForDay(this.day));
+    if (puzzle) this.load(puzzle);
+  }
+
+  setMode(mode: Mode): void {
+    if (mode === this.mode) return;
+    this.mode = mode;
+    localStorage.setItem('zip.mode', mode);
+    this.newPuzzle();
+    this.markDirty();
+  }
+
+  /** Copies the day's result. Returns false if the clipboard refused. */
+  async share(): Promise<boolean> {
+    const result = readResult(this.day);
+    if (!result) return false;
+    const text = shareText(result, streak(this.day), location.origin + location.pathname);
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   restart(): void {
@@ -620,18 +713,28 @@ export class GameCore {
       newPuzzle: () => core.newPuzzle(),
       audio: core.audio,
       generate: generateDifficulty,
+      setMode: (mode: Mode) => core.setMode(mode),
+      share: () => core.share(),
+      get day() { return core.day; },
       U,
       PAD: 6,
+      /*
+       * Live accessors, not a snapshot. restart() and load() replace the path
+       * and inPath arrays wholesale, so a caller that held the returned object
+       * across one of those would otherwise be reading a detached array and
+       * quietly disagreeing with the board.
+       */
       get state() {
         return {
-          puzzle: core.puzzle,
-          engine: core.engine,
-          path: core.path,
-          inPath: core.inPath,
-          elapsed: core.elapsed,
-          running: core.running,
-          solved: core.solved,
-          difficulty: core.difficulty
+          get puzzle() { return core.puzzle; },
+          get engine() { return core.engine; },
+          get path() { return core.path; },
+          get inPath() { return core.inPath; },
+          get elapsed() { return core.elapsed; },
+          get running() { return core.running; },
+          get solved() { return core.solved; },
+          get difficulty() { return core.difficulty; },
+          get mode() { return core.mode; }
         };
       }
     };

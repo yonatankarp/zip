@@ -169,7 +169,8 @@ export class BoardView {
       });
       const text = node('text', {
         x: this.cx(cell), y: this.cy(cell), 'text-anchor': 'middle',
-        'dominant-baseline': 'central', fill: 'var(--accent-ink)', 'font-size': 38,
+        'dominant-baseline': 'central', fill: 'var(--accent-ink)',
+        'font-size': index + 1 >= 10 ? 31 : 38,
         'font-weight': 700, 'font-family': 'ui-sans-serif, system-ui, sans-serif'
       });
       text.textContent = String(index + 1);

@@ -71,6 +71,9 @@ const settle = page =>
   page.eval('return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))');
 
 const loadPuzzle = async (page, tier, seed) => {
+  // Most suites are about play, not about which mode supplied the board, so
+  // they run in practice mode and hand the core a puzzle directly.
+  await page.eval(`window.__zip.setMode('practice'); return 1`);
   await page.eval(`window.__zip.load(window.__zip.generate('${tier}', ${seed})); return 1`);
   await settle(page);
 };
@@ -394,13 +397,15 @@ for (const tier of TIERS) {
   // must reset it and show the opening move again. Not every square offers a
   // wrong-but-legal move -- walls often leave one continuation -- so search.
   const diverged = await page.eval(`
-    const z = window.__zip, st = z.state, eng = st.engine, sol = st.puzzle.solution;
+    const z = window.__zip;
+    const sol = z.state.puzzle.solution, eng = z.state.engine;
     z.restart();
     z.step(sol[0]);
     for (let i = 1; i < sol.length; i++) {
-      const head = st.path[st.path.length - 1];
+      const path = z.state.path, inPath = z.state.inPath;   // re-read: restart replaced them
+      const head = path[path.length - 1];
       for (const c of eng.adj[head]) {
-        if (c !== sol[i] && eng.canStep(st.path, st.inPath, c)) { z.step(c); return i; }
+        if (c !== sol[i] && eng.canStep(path, inPath, c)) { z.step(c); return i; }
       }
       z.step(sol[i]);
     }
@@ -579,6 +584,158 @@ const burst = async priorBest => {
   ok(await page.eval('return window.__zip.state.elapsed') < 150, 'a new puzzle inherited time');
   ok(await page.eval('return window.__zip.state.running === false'),
      'a new puzzle started its clock before the first move');
+  await page.close();
+}
+
+// --- the daily: same board for everyone, one result a day ------------------
+{
+  // Deterministic: the same UTC day must produce byte-identical boards across
+  // separate page loads, because the seed comes from the date and nothing else.
+  const fingerprint = `
+    const p = window.__zip.state.puzzle;
+    return JSON.stringify({ w: p.walls, n: p.waypoints, s: p.solution });`;
+
+  const first = await open();
+  ok(await first.eval("return window.__zip.core.mode === 'daily'"), 'daily is not the default mode');
+  const dayOne = await first.eval('return window.__zip.day');
+  const boardOne = await first.eval(fingerprint);
+  ok(/Daily #/.test(await first.eval("return document.getElementById('dayNumber').textContent")),
+     'daily bar does not name the puzzle');
+  ok(await first.eval("return document.getElementById('newBtn').disabled === true"),
+     'New is clickable in daily mode, but there is only one puzzle a day');
+  ok(await first.eval("return getComputedStyle(document.getElementById('newBtn')).opacity !== '1'"),
+     'the disabled New button still looks enabled');
+  ok(await first.eval("return !document.getElementById('autoBtn')"),
+     'auto-next is offered in daily mode, where there is nothing to advance to');
+  await first.close();
+
+  const second = await open();
+  ok(await second.eval('return window.__zip.day') === dayOne, 'day number is not stable');
+  ok(await second.eval(fingerprint) === boardOne, 'the daily differs between loads');
+
+  // A different day must give a different board.
+  const other = await second.eval(`
+    const z = window.__zip;
+    const a = JSON.stringify(z.generate('medium', (${dayOne} * 2654435761) >>> 0).solution);
+    const b = JSON.stringify(z.generate('medium', ((${dayOne} + 1) * 2654435761) >>> 0).solution);
+    return a !== b;`);
+  ok(other, 'consecutive days generate the same puzzle');
+  await second.close();
+}
+
+// --- backtracks are counted and reported ------------------------------------
+{
+  const page = await open();
+  await page.eval("window.__zip.setMode('practice'); return 1");
+  await loadPuzzle(page, 'medium', 8675);
+  const pts = await page.eval(POINTS);
+
+  await page.mouse('mousePressed', pts[0].x, pts[0].y);
+  for (let i = 1; i <= 6; i++) await page.mouse('mouseMoved', pts[i].x, pts[i].y);
+  await settle(page);
+  ok(await page.eval("return !document.getElementById('backtracks')"),
+     'a backtrack was counted before any retraction');
+
+  for (const i of [5, 4, 3]) await page.mouse('mouseMoved', pts[i].x, pts[i].y);
+  await settle(page);
+  ok(/↩ 3/.test(await page.eval("return document.getElementById('backtracks').textContent")),
+     `retracing three cells reported ${await page.eval("return document.getElementById('backtracks').textContent")}`);
+
+  // The Undo button counts too, and the win line reports the total.
+  await click(page, 'undoBtn');
+  ok(/↩ 4/.test(await page.eval("return document.getElementById('backtracks').textContent")),
+     'the Undo button did not count as a backtrack');
+  await page.mouse('mouseReleased', pts[3].x, pts[3].y);
+  await page.drag(await page.eval(POINTS));
+  await sleep(200);
+  ok(/backtrack/.test(await page.eval("return document.getElementById('bannerText').textContent")),
+     'the win line does not report backtracks');
+  await page.close();
+}
+
+// --- solving the daily records it, and the result is shareable --------------
+{
+  const page = await open();
+  await page.send('Browser.grantPermissions', {
+    origin: site.origin,
+    permissions: ['clipboardReadWrite', 'clipboardSanitizedWrite']
+  });
+  const day = await page.eval('return window.__zip.day');
+  // Two prior days on record, so a streak exists to report.
+  await page.eval(`
+    for (const d of [${day - 2}, ${day - 1}]) {
+      localStorage.setItem('zip.daily.' + d, JSON.stringify({ day: d, ms: 40000, backtracks: 1, hinted: false }));
+    }
+    return 1;`);
+  await page.goto(URL);
+  await page.eval('return !!window.__zip');
+  await settle(page);
+  ok(await page.eval("return !!document.getElementById('dailyTodo')"), 'today already shows as solved');
+  // A streak stands until a day is missed, so it shows before today is played.
+  ok(await page.eval("return /2 day streak/.test(document.getElementById('streak').textContent)"),
+     'the standing streak is hidden until today is solved');
+
+  await page.drag(await page.eval(POINTS));
+  await sleep(300);
+  const recorded = await page.eval(`return localStorage.getItem('zip.daily.' + window.__zip.day)`);
+  ok(recorded !== null, 'solving the daily recorded nothing');
+  const parsed = JSON.parse(recorded ?? '{}');
+  ok(parsed.day === day, `recorded day ${parsed.day}, expected ${day}`);
+  ok(typeof parsed.ms === 'number' && parsed.ms > 0, 'recorded no time');
+  ok(/Daily #/.test(await page.eval("return document.getElementById('bannerText').textContent")),
+     'the daily win line does not name the puzzle');
+  ok(/3 day streak/.test(await page.eval("return document.getElementById('bannerText').textContent")),
+     'the streak was not reported on the third consecutive day');
+
+  await settle(page);
+  ok(await page.eval("return /3 day streak/.test(document.getElementById('streak').textContent)"),
+     'the daily bar does not show the streak');
+
+  await click(page, 'shareBtn');
+  await sleep(200);
+  const clip = await page.eval('return navigator.clipboard.readText()');
+  ok(/^Zip #\d+ — \d:\d\d\.\d/.test(clip), `share text was "${clip}"`);
+  ok(/backtrack/.test(clip), 'share text omits backtracks');
+  ok(clip.includes(site.origin), 'share text omits the link');
+  ok(/Copied/.test(await page.eval("return document.getElementById('shareBtn').textContent")),
+     'the share button gave no feedback');
+
+  // Replaying must not overwrite the day's recorded result.
+  const before = recorded;
+  await click(page, 'restartBtn');
+  await page.drag(await page.eval(POINTS));
+  await sleep(300);
+  ok(await page.eval("return localStorage.getItem('zip.daily.' + window.__zip.day)") === before,
+     'replaying the daily overwrote the recorded result');
+  await page.close();
+}
+
+// --- practice mode still behaves ---------------------------------------------
+{
+  const page = await open();
+  await page.eval("window.__zip.setMode('practice'); return 1");
+  await settle(page);
+  ok(await page.eval("return !!document.getElementById('tiers')"), 'practice mode has no tier picker');
+  ok(await page.eval("return document.getElementById('newBtn').disabled === false"),
+     'New is disabled in practice mode');
+  ok(await page.eval("return !document.getElementById('dailyBar')"), 'the daily bar is showing in practice mode');
+  await page.eval("window.__zip.setMode('daily'); return 1");
+  await settle(page);
+  ok(await page.eval("return !!document.getElementById('dailyBar')"), 'daily mode has no daily bar');
+  ok(await page.eval("return !document.getElementById('tiers')"), 'the tier picker is showing in daily mode');
+  await page.close();
+}
+
+// --- a superseded generation must not land on the board ---------------------
+// Generation is deferred a frame, so two quick switches leave two in flight.
+{
+  const page = await open();
+  await page.eval("window.__zip.setMode('practice'); return 1");
+  await page.eval("window.__zip.load(window.__zip.generate('expert', 4242)); return 1");
+  const claimed = await page.eval('return JSON.stringify(window.__zip.state.puzzle.waypoints)');
+  await sleep(400);           // long enough for any in-flight generation to finish
+  const now = await page.eval('return JSON.stringify(window.__zip.state.puzzle.waypoints)');
+  ok(now === claimed, 'a superseded generation replaced the loaded puzzle');
   await page.close();
 }
 

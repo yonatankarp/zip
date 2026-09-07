@@ -455,16 +455,21 @@ export function makeEngine(puzzle: Puzzle): Engine {
 /*
  * Generate by refinement rather than by luck.
  *
- * Sample a path, then repeatedly ask "is this puzzle ambiguous?". If a rival
- * solution exists it must use some edge the intended path does not -- walling
- * that edge kills the rival and provably cannot invalidate the intended path.
- * Walls are the cheap constraint so they go in first; numbers are added only
- * once the wall budget runs out, or to pull an over-hard puzzle back into band.
+ * Sample a path, drop the tier's full complement of numbers on it, then
+ * repeatedly ask "is this puzzle ambiguous?". If a rival solution exists it
+ * must use some edge the intended path does not -- walling that edge kills the
+ * rival and provably cannot invalidate the intended path.
  *
- * With randomly placed numbers alone, zero of 120 sampled 7x7 grids were
- * uniquely solvable. With adaptive walls the yield is 100% at every size.
+ * Numbers come first and walls second, which is the way round the real game
+ * reads: a hard board is dense with numbers, not fenced into corridors. Walls
+ * are then spent only on the ambiguity that remains, and more numbers are added
+ * beyond the target only if the wall budget runs out first.
+ *
+ * With randomly placed numbers alone and no walls at all, zero of 120 sampled
+ * 7x7 grids were uniquely solvable, which is why both levers are needed.
  */
 interface RefineConfig {
+  /** How many numbers the finished puzzle should carry. */
   waypoints: number;
   maxWaypoints: number;
   wallBudget: number;
@@ -485,9 +490,8 @@ export function refine(
   const used = new Set<number>();
   for (let i = 0; i + 1 < path.length; i++) used.add(edgeKey(path[i]!, path[i + 1]!));
 
-  // Seed some walls before the first solve. They cost nothing -- off-path edges
-  // can never invalidate the solution -- and they shrink the search space a
-  // lot, which is what keeps generation fast on the larger grids.
+  // A few seed walls still help the first solve terminate quickly on the large
+  // grids; the bulk of the constraining is done by the numbers.
   const walls = pickWalls(rows, cols, path, Math.min(cfg.seedWalls, cfg.wallBudget), rng);
 
   function addWaypoint(): boolean {
@@ -562,7 +566,9 @@ export function generate(options: GenerateOptions = {}): Puzzle | null {
     waypoints: options.waypoints ?? 4,
     maxWaypoints: options.maxWaypoints ?? 10,
     wallBudget,
-    seedWalls: options.seedWalls ?? Math.round(wallBudget * 0.6),
+    // Just enough to keep the first solve quick on the big grids; the
+    // numbers, not the walls, are what make the puzzle well-posed.
+    seedWalls: options.seedWalls ?? Math.min(2, wallBudget),
     minGuesses: options.minGuesses ?? 0,
     maxGuesses: options.maxGuesses ?? Infinity,
     minGap: options.minGap ?? 2,
@@ -590,20 +596,20 @@ export function generate(options: GenerateOptions = {}): Puzzle | null {
  */
 export const DIFFICULTIES: Record<DifficultyName, Difficulty> = {
   easy: {
-    label: 'Easy', rows: 5, cols: 5, wallBudget: 4,
-    waypoints: 4, maxWaypoints: 10, minGuesses: 0, maxGuesses: 2
+    label: 'Easy', rows: 5, cols: 5, wallBudget: 5,
+    waypoints: 6, maxWaypoints: 9, minGuesses: 1, maxGuesses: 4
   },
   medium: {
     label: 'Medium', rows: 6, cols: 6, wallBudget: 6,
-    waypoints: 4, maxWaypoints: 9, minGuesses: 3, maxGuesses: 6
+    waypoints: 8, maxWaypoints: 11, minGuesses: 5, maxGuesses: 8
   },
   hard: {
-    label: 'Hard', rows: 7, cols: 7, wallBudget: 10,
-    waypoints: 4, maxWaypoints: 8, minGuesses: 7, maxGuesses: 11
+    label: 'Hard', rows: 7, cols: 7, wallBudget: 6,
+    waypoints: 11, maxWaypoints: 14, minGuesses: 9, maxGuesses: 13
   },
   expert: {
-    label: 'Expert', rows: 8, cols: 8, wallBudget: 18,
-    waypoints: 4, maxWaypoints: 9, minGuesses: 12, maxGuesses: Infinity
+    label: 'Expert', rows: 8, cols: 8, wallBudget: 7,
+    waypoints: 15, maxWaypoints: 18, minGuesses: 14, maxGuesses: Infinity
   }
 };
 

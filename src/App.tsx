@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { GameCore, type Snapshot } from './game/core.ts';
 import Header from './components/Header.tsx';
 import Tiers from './components/Tiers.tsx';
+import Modes from './components/Modes.tsx';
+import DailyBar from './components/DailyBar.tsx';
 import Board from './components/Board.tsx';
 import Controls from './components/Controls.tsx';
 import Status from './components/Status.tsx';
@@ -41,9 +43,13 @@ export default function App() {
           onCycleSound={() => core.cycleSound()}
           onCycleTheme={() => core.cycleTheme()}
         />
-        <Tiers current={snap.difficulty} onPick={name => core.setDifficulty(name)} />
+        <Modes mode={snap.mode} onPick={mode => core.setMode(mode)} />
+        {snap.mode === 'practice'
+          ? <Tiers current={snap.difficulty} onPick={name => core.setDifficulty(name)} />
+          : <DailyBar snap={snap} onShare={() => core.share()} />}
         <Board ref={boardRef} snap={snap} />
         <Controls
+          mode={snap.mode}
           onNew={() => core.newPuzzle()}
           onRestart={() => core.restart()}
           onUndo={() => core.undo()}

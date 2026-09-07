@@ -63,6 +63,14 @@ header { display: flex; align-items: center; gap: 10px; }
 
 /* ------------------------------------------------------------------- tiers */
 .tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.modes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.daily {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  border: 1px solid var(--line); background: var(--panel); border-radius: 10px;
+  padding: 8px 10px 8px 12px; font-size: 13px; min-height: 42px;
+}
+.daily-right { display: flex; align-items: center; gap: 10px; }
+.muted { color: var(--dim); }
 .tier {
   appearance: none; border: 1px solid var(--line); background: var(--panel);
   color: var(--dim); border-radius: 10px; padding: 9px 4px; cursor: pointer;
@@ -107,6 +115,9 @@ svg.board.busy { opacity: .3; pointer-events: none; }
 }
 .btn:hover { border-color: var(--dim); }
 .btn:active { transform: translateY(1px); }
+.btn:disabled { opacity: .35; cursor: not-allowed; }
+.btn:disabled:hover { border-color: var(--line); }
+.btn:disabled:active { transform: none; }
 .btn.primary { background: var(--path); border-color: var(--path); color: #fff; }
 
 .status {
