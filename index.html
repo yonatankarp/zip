@@ -799,7 +799,10 @@
    */
   var SOUND_MODES = ['all', 'sparse', 'off'];
   var storedSound = localStorage.getItem('zip.sound');
-  if (storedSound === 'on' || storedSound === null) storedSound = 'all';   // pre-3-state values
+  // Silent until asked for. The click is nice for some and grating for others,
+  // and a puzzle you drill in public should not make noise by surprise.
+  if (storedSound === null) storedSound = 'off';
+  if (storedSound === 'on') storedSound = 'all';          // pre-3-state value
   var audio = { ctx: null, mode: SOUND_MODES.indexOf(storedSound) >= 0 ? storedSound : 'all' };
 
   function audible() { return audio.mode !== 'off'; }

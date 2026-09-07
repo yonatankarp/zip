@@ -28,14 +28,14 @@ const CHROME = findChrome();
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function launch() {
+async function launch({ autoplay = 'relaxed' } = {}) {
   if (!CHROME) throw new Error('no Chrome found; tried:\n  ' + CANDIDATES.join('\n  '));
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'zip-cdp-'));
   const proc = spawn(CHROME, [
     '--headless', '--disable-gpu', '--no-first-run', '--no-default-browser-check',
     '--hide-scrollbars', '--force-device-scale-factor=2',
     '--no-sandbox', '--disable-dev-shm-usage',      // CI runners need both
-    '--autoplay-policy=no-user-gesture-required',
+    ...(autoplay === 'relaxed' ? ['--autoplay-policy=no-user-gesture-required'] : []),
     '--remote-debugging-port=0', '--user-data-dir=' + profile, 'about:blank'
   ], { stdio: ['ignore', 'ignore', 'ignore'] });
 

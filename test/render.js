@@ -267,15 +267,29 @@ const POINTS = `
     await page.setup({ scheme: 'dark', width: 520, height: 900 });
     await page.goto(URL);
     await page.eval("window.__zip.load(Zip.generateDifficulty('easy', 8080)); return 1");
-    const pts = await page.eval(POINTS);
+    let pts = await page.eval(POINTS);
 
     // Audio only starts on a user gesture; a real mouse press is one.
-    ok(await page.eval("return window.__zip.audio.mode === 'all'"), 'sound does not default to all');
+    // Silent by default: nothing should make noise, or even build an audio
+    // context, until the player opts in.
+    ok(await page.eval("return window.__zip.audio.mode === 'off'"), 'sound does not default to off');
+    await page.mouse('mousePressed', pts[0].x, pts[0].y);
+    await page.mouse('mouseMoved', pts[1].x, pts[1].y);
     ok(await page.eval('return window.__zip.audio.ctx === null'),
-       'an AudioContext was built before any gesture');
+       'an AudioContext was built while sound was off');
+
+    // Turned on, a real gesture must leave the context running -- a suspended
+    // one is the classic way audio silently does nothing.
+    await page.eval("localStorage.setItem('zip.sound','all'); return 1");
+    await page.goto(URL);
+    await page.eval("window.__zip.load(Zip.generateDifficulty('easy', 8080)); return 1");
+    pts = await page.eval(POINTS);
+    ok(await page.eval("return window.__zip.audio.mode === 'all'"), 'stored sound mode not restored');
     await page.mouse('mousePressed', pts[0].x, pts[0].y);
     await page.mouse('mouseMoved', pts[1].x, pts[1].y);
     ok(await page.eval('return !!window.__zip.audio.ctx'), 'no AudioContext after a real gesture');
+    ok(await page.eval("return window.__zip.audio.ctx.state === 'running'"),
+       'AudioContext is suspended, so nothing would be heard');
 
     // A number swells when reached, then returns to its resting size.
     const numberAt = await page.eval(`
@@ -310,7 +324,7 @@ const POINTS = `
       ['sparse', { near: '', far: 'none', mute: 'none' }, 'true'],
       ['off',    { near: 'none', far: 'none', mute: '' }, 'false'],
       ['all',    { near: '', far: '', mute: 'none' }, 'true']
-    ];
+    ];   // starts from 'all', set above
     for (const [mode, icon, pressed] of cycle) {
       await page.eval("document.getElementById('soundBtn').click(); return 1");
       ok(await page.eval(`return localStorage.getItem('zip.sound') === '${mode}'`),
@@ -338,7 +352,7 @@ const POINTS = `
     // than a first solve -- that is the only case that earns a burst.
     await page.eval("localStorage.setItem('zip.best.medium', '999999'); return 1");
     await page.eval("window.__zip.load(Zip.generateDifficulty('medium', 1212)); return 1");
-    let pts = await page.eval(POINTS);
+    const pts = await page.eval(POINTS);
     await page.drag(pts);
     await sleep(120);
     ok(await page.eval("return !!document.getElementById('confetti')"), 'no burst on a personal best');

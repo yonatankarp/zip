@@ -121,12 +121,13 @@ A few things exist specifically for drilling speed:
 
 And some things purely because they make a run feel better:
 
-- **Sound**, synthesised from oscillators so the page still ships as one file
-  with no assets. Each step clicks at a pitch that rises as the board fills, so
-  a run has a shape you can hear; numbers ring brighter as you reach them; a
-  solve resolves into a chord, with an extra note on a personal best. It is
-  deliberately quiet and short — this plays hundreds of times a session — and
-  the speaker button mutes it for good.
+- **Sound, off by default.** The speaker button cycles *every step → numbers and
+  wins → off*, and the choice persists. Turned on, each step clicks at a pitch
+  that rises as the board fills, so a run has a shape you can hear; numbers ring
+  brighter as you reach them; a solve resolves into a chord, with an extra note
+  on a personal best. It is synthesised from oscillators, so the page still ships
+  as one file with no assets. Nothing makes noise — and no audio context is even
+  built — until you ask for it.
 - **Haptics** on phones, on each number and on the solve.
 - A reached number **swells briefly**, and finishing sends a **bright dash
   running the length of the completed route**. The sweep is a decorative overlay
