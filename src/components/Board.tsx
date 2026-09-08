@@ -1,6 +1,7 @@
 import type { Ref } from 'react';
 import type { Snapshot } from '../game/core.ts';
 import ReadyGate from './ReadyGate.tsx';
+import { rampColour } from '../game/board.ts';
 
 interface Props {
   ref: Ref<SVGSVGElement>;
@@ -66,7 +67,15 @@ export default function Board({ ref, regionRef, announcerRef, snap, onStart }: P
         aria-valuemax={snap.total}
         aria-valuenow={snap.filled}
       >
-        <i id="progressFill" className={snap.solved ? 'done' : ''} style={{ width: `${progress}%` }} />
+        <i
+          id="progressFill"
+          className={snap.solved ? 'done' : ''}
+          style={{
+            width: `${progress}%`,
+            // Same ramp as the line, so the bar and the board agree.
+            background: snap.solved ? undefined : rampColour(snap.filled / Math.max(1, snap.total - 1))
+          }}
+        />
       </div>
     </>
   );

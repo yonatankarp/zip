@@ -11,7 +11,7 @@ import {
   DIFFICULTIES, generateDifficulty, makeEngine,
   type Cell, type DifficultyName, type Engine, type Puzzle
 } from '../engine/zip.ts';
-import { BoardView, U, type Tip } from './board.ts';
+import { BoardView, U, rampColour, type NumberState, type Tip } from './board.ts';
 import { Audio, SOUND_MODES, type SoundMode } from './audio.ts';
 import { Fx } from './fx.ts';
 import { PuzzleSource } from './source.ts';
@@ -334,8 +334,11 @@ export class GameCore {
 
   // --------------------------------------------------------------- drawing
 
-  private lineColour(): string {
-    return this.solved ? 'var(--good)' : this.revealed ? 'var(--dim)' : 'var(--path)';
+  /** A single colour that overrides the progress ramp, or null to use it. */
+  private flatColour(): string | null {
+    if (this.solved) return 'var(--good)';
+    if (this.revealed) return 'var(--dim)';
+    return null;
   }
 
   private numbersTaken(): number {
@@ -345,13 +348,27 @@ export class GameCore {
   }
 
   private renderTrail(): void {
-    this.board?.drawTrail(this.path, this.drag.tip ?? this.drag.settle, this.lineColour());
+    this.board?.drawTrail(this.path, this.drag.tip ?? this.drag.settle, this.flatColour());
   }
 
   private render(): void {
     this.renderTrail();
-    this.board?.drawNumbers(this.inPath, this.numbersTaken(), this.lineColour(),
-      !this.solved && !this.revealed);
+    if (this.puzzle) {
+      const total = this.puzzle.rows * this.puzzle.cols;
+      const last = Math.max(1, total - 1);
+      const flat = this.flatColour();
+      const taken = this.numbersTaken();
+      const live = !this.solved && !this.revealed;
+      const states: NumberState[] = this.puzzle.waypoints.map((cell, index) => {
+        const at = this.inPath[cell] ? this.path.indexOf(cell) : -1;
+        return {
+          fill: at >= 0 ? (flat ?? rampColour(at / last)) : 'var(--accent)',
+          ink: at >= 0 ? 'var(--path-ink)' : 'var(--accent-ink)',
+          next: live && index === taken
+        };
+      });
+      this.board?.drawNumbers(states, rampColour(this.path.length / last));
+    }
     this.markDirty();
   }
 

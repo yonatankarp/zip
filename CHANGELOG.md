@@ -2,6 +2,15 @@
 
 Generated from `src/changelog.ts` by `tools/make-changelog.js` — edit that, not this.
 
+## 1.8.0 — 2026-09-08
+
+The line is wider, and its colour tells you how far through you are.
+
+### Changed
+
+- The line is thicker, and shifts from blue through violet to pink as the board fills, so how far through you are is readable at a glance. Numbers you have passed through take the line’s colour there.
+- The number you are heading for is ringed in the colour the line will be when it arrives — a different colour each time, rather than a fixed highlight.
+
 ## 1.7.0 — 2026-09-08
 
 The clock starts when you see the board, not when you first move.

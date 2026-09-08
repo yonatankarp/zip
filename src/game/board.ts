@@ -10,10 +10,45 @@ import type { Cell, Puzzle } from '../engine/zip.ts';
 
 /** viewBox units per cell. */
 export const U = 100;
+/** Stroke width of the drawn line, in viewBox units. */
+export const LINE = 36;
+
+/*
+ * The line changes colour as the board fills, so how far through you are is
+ * readable at a glance rather than only from the counter. Fixed values rather
+ * than theme tokens: the ramp is its own visual language and should look the
+ * same in both themes.
+ */
+const RAMP: Array<[number, number, number]> = [
+  [77, 139, 255],    // blue, at the start
+  [124, 108, 246],
+  [176, 92, 232],
+  [255, 95, 158]     // pink, at the last square
+];
+
+/** Colour of the line a fraction `t` of the way through the board. */
+export function rampColour(t: number): string {
+  const clamped = Math.max(0, Math.min(1, t));
+  const span = (RAMP.length - 1) * clamped;
+  const i = Math.min(RAMP.length - 2, Math.floor(span));
+  const f = span - i;
+  const from = RAMP[i]!;
+  const to = RAMP[i + 1]!;
+  const mix = (a: number, b: number) => Math.round(a + (b - a) * f);
+  return `rgb(${mix(from[0], to[0])}, ${mix(from[1], to[1])}, ${mix(from[2], to[2])})`;
+}
 /** viewBox inset on every side, so strokes are not clipped. */
 export const PAD = 6;
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
+
+export interface NumberState {
+  /** Disc fill: the ramp colour where the line reaches it, or the resting amber. */
+  fill: string;
+  /** Digit colour, for contrast against the fill. */
+  ink: string;
+  next: boolean;
+}
 
 export interface Tip {
   ux: number;
@@ -51,6 +86,8 @@ function node<K extends keyof SVGElementTagNameMap>(
 export class BoardView {
   private puzzle: Puzzle | null = null;
   private trail: SVGPolylineElement | null = null;
+  private segments: SVGLineElement[] = [];
+  private ink: SVGGElement | null = null;
   private head: SVGCircleElement | null = null;
   private numbers: NumberNode[] = [];
   private pops: Pop[] = [];
@@ -152,11 +189,29 @@ export class BoardView {
     }
     this.svg.appendChild(rules);
 
+    /*
+     * The polyline carries the geometry but paints nothing: it is what the win
+     * sweep copies its shape from. The visible line is drawn as one segment per
+     * step, because each needs its own colour and an SVG gradient runs across a
+     * bounding box rather than along a path.
+     */
     this.trail = node('polyline', {
-      fill: 'none', stroke: 'var(--path)', 'stroke-width': 26,
+      fill: 'none', stroke: 'none', 'stroke-width': LINE,
       'stroke-linecap': 'round', 'stroke-linejoin': 'round', points: ''
     });
     this.svg.appendChild(this.trail);
+
+    this.ink = node('g', {
+      id: 'ink', 'stroke-width': LINE, 'stroke-linecap': 'round', 'stroke-linejoin': 'round'
+    });
+    this.segments = [];
+    for (let i = 0; i < rows * cols; i++) {
+      const segment = node('line', { x1: 0, y1: 0, x2: 0, y2: 0, visibility: 'hidden' });
+      this.ink.appendChild(segment);
+      this.segments.push(segment);
+    }
+    this.svg.appendChild(this.ink);
+
     this.head = node('circle', { r: 0, fill: 'var(--board)' });
     this.svg.appendChild(this.head);
 
@@ -167,7 +222,7 @@ export class BoardView {
     (covered ? [] : puzzle.waypoints).forEach((cell, index) => {
       const ring = node('circle', {
         cx: this.cx(cell), cy: this.cy(cell), r: 40, fill: 'none',
-        stroke: 'var(--ink)', 'stroke-width': 2.5, opacity: 0
+        stroke: 'var(--ink)', 'stroke-width': 5, opacity: 0
       });
       const disc = node('circle', {
         cx: this.cx(cell), cy: this.cy(cell), r: 30, fill: 'var(--accent)'
@@ -205,44 +260,72 @@ export class BoardView {
 
   // --------------------------------------------------------------- drawing
 
-  drawTrail(path: readonly Cell[], tip: Tip | null, colour: string): void {
+  /** `flat` overrides the ramp — used when the board is solved or revealed. */
+  drawTrail(path: readonly Cell[], tip: Tip | null, flat: string | null): void {
     if (!this.trail || !this.head || !this.puzzle) return;
+    const total = this.puzzle.rows * this.puzzle.cols;
     let upto = path.length;
     // While retracting, drop the head vertex: otherwise the stroke doubles back
     // over itself and the line never looks like it is shortening.
     if (tip?.retract && upto > 1) upto--;
 
-    const points: string[] = [];
-    for (let i = 0; i < upto; i++) points.push(`${this.cx(path[i]!)},${this.cy(path[i]!)}`);
-
-    let tx: number | null = null;
-    let ty: number | null = null;
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (let i = 0; i < upto; i++) {
+      xs.push(this.cx(path[i]!));
+      ys.push(this.cy(path[i]!));
+    }
     if (tip && path.length) {
       const head = path[path.length - 1]!;
-      tx = this.cx(head) + tip.ux * tip.amount;
-      ty = this.cy(head) + tip.uy * tip.amount;
-      points.push(`${tx},${ty}`);
+      xs.push(this.cx(head) + tip.ux * tip.amount);
+      ys.push(this.cy(head) + tip.uy * tip.amount);
     }
+
+    const points: string[] = [];
+    for (let i = 0; i < xs.length; i++) points.push(`${xs[i]},${ys[i]}`);
     this.trail.setAttribute('points', points.join(' '));
-    this.trail.setAttribute('stroke', colour);
+
+    for (let i = 0; i < this.segments.length; i++) {
+      const segment = this.segments[i]!;
+      if (i + 1 >= xs.length) {
+        segment.setAttribute('visibility', 'hidden');
+        continue;
+      }
+      segment.setAttribute('x1', String(xs[i]));
+      segment.setAttribute('y1', String(ys[i]));
+      segment.setAttribute('x2', String(xs[i + 1]));
+      segment.setAttribute('y2', String(ys[i + 1]));
+      segment.setAttribute('stroke', flat ?? rampColour(i / Math.max(1, total - 1)));
+      segment.setAttribute('visibility', 'visible');
+    }
 
     if (path.length) {
-      const last = path[path.length - 1]!;
-      this.head.setAttribute('cx', String(tx ?? this.cx(last)));
-      this.head.setAttribute('cy', String(ty ?? this.cy(last)));
-      this.head.setAttribute('r', '8');   // a dot inside the stroke marks where you are
+      this.head.setAttribute('cx', String(xs[xs.length - 1]));
+      this.head.setAttribute('cy', String(ys[ys.length - 1]));
+      this.head.setAttribute('r', '10');  // a dot inside the stroke marks where you are
     } else {
       this.head.setAttribute('r', '0');
     }
   }
 
-  drawNumbers(inPath: Uint8Array, taken: number, colour: string, ringNext: boolean): void {
+  /*
+   * Numbers the line has passed through take the colour the line has there, so
+   * the whole route reads as one continuous thing. The number you are heading
+   * for is ringed in the colour the line will be when it arrives -- a different
+   * colour each time, which is what makes it obvious rather than decorative.
+   */
+  drawNumbers(states: readonly NumberState[], nextColour: string): void {
     this.numbers.forEach((entry, index) => {
-      const visited = !!inPath[entry.cell];
-      entry.disc.setAttribute('fill', visited ? colour : 'var(--accent)');
-      entry.text.setAttribute('fill', visited ? 'var(--path-ink)' : 'var(--accent-ink)');
-      // Ring the number you are heading for next -- one less thing to scan for.
-      entry.ring.setAttribute('opacity', ringNext && index === taken ? '0.45' : '0');
+      const state = states[index];
+      if (!state) return;
+      entry.disc.setAttribute('fill', state.fill);
+      entry.text.setAttribute('fill', state.ink);
+      if (state.next) {
+        entry.ring.setAttribute('stroke', nextColour);
+        entry.ring.setAttribute('opacity', '1');
+      } else {
+        entry.ring.setAttribute('opacity', '0');
+      }
     });
   }
 

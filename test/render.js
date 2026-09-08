@@ -1155,7 +1155,7 @@ section('the clock starts when the board is revealed');
     covered: document.getElementById('board').classList.contains('covered'),
     numbers: document.querySelectorAll('#board text').length,
     walls: document.querySelectorAll('#board g[stroke="var(--wall)"] line').length,
-    rules: document.querySelectorAll('#board line').length,
+    rules: document.querySelectorAll('#board g[stroke="var(--line)"] line').length,
     start: !!document.getElementById('startBtn'),
     clock: document.getElementById('clock').textContent,
     phase: window.__zip.core.snapshot().phase
@@ -1223,6 +1223,62 @@ section('space starts it, and auto-next counts itself in');
   const next = await drill.eval("return window.__zip.core.snapshot().phase");
   ok(next !== 'ready', `auto-next stopped to ask again (phase "${next}")`);
   await drill.close();
+}
+
+// --- the line reads as progress -------------------------------------------
+section('the line reads as progress');
+{
+  const page = await open();
+  await loadPuzzle(page, 'medium', 31337);
+  const pts = await page.eval(POINTS);
+
+  // Wide enough to read as a pipe rather than a stroke.
+  const width = await page.eval(
+    "return parseFloat(document.getElementById('ink').getAttribute('stroke-width'))");
+  ok(width >= 32, `the line is ${width} units wide on a 100-unit cell`);
+
+  await page.drag(pts.slice(0, 24));
+  await settle(page);
+
+  const drawn = await page.eval(`
+    const segs = [...document.querySelectorAll('#ink line')]
+      .filter(l => l.getAttribute('visibility') === 'visible');
+    return {
+      count: segs.length,
+      first: segs[0]?.getAttribute('stroke'),
+      last: segs[segs.length - 1]?.getAttribute('stroke'),
+      distinct: new Set(segs.map(l => l.getAttribute('stroke'))).size
+    };`);
+  ok(drawn.count >= 20, `only ${drawn.count} segments drawn for 24 cells`);
+  // Every step has its own colour, and the ends are plainly different.
+  ok(drawn.distinct >= 15, `the line only used ${drawn.distinct} colours across ${drawn.count} steps`);
+  ok(drawn.first !== drawn.last, `the line starts and ends the same colour (${drawn.first})`);
+
+  // The number being aimed for is ringed in the colour the line will arrive in,
+  // so it changes as the board fills rather than being a fixed highlight.
+  const ringed = await page.eval(`
+    const rings = [...document.querySelectorAll('#board circle')]
+      .filter(c => c.getAttribute('fill') === 'none' && c.getAttribute('opacity') === '1');
+    return { count: rings.length, colour: rings[0]?.getAttribute('stroke') };`);
+  ok(ringed.count === 1, `${ringed.count} numbers are lit as next, expected exactly 1`);
+  ok(/^rgb\(/.test(ringed.colour ?? ''), `the next number is ringed "${ringed.colour}"`);
+
+  const before = ringed.colour;
+  await page.drag(pts.slice(0, 30));
+  await settle(page);
+  const after = await page.eval(`
+    const rings = [...document.querySelectorAll('#board circle')]
+      .filter(c => c.getAttribute('fill') === 'none' && c.getAttribute('opacity') === '1');
+    return rings[0]?.getAttribute('stroke');`);
+  ok(after !== before, `the next-number highlight stayed ${before} as the board filled`);
+
+  // A number the line has passed through takes the line's colour there.
+  const passed = await page.eval(`
+    const discs = [...document.querySelectorAll('#board circle')]
+      .filter(c => (c.getAttribute('fill') ?? '').startsWith('rgb('));
+    return discs.length;`);
+  ok(passed >= 2, `only ${passed} numbers took the line's colour`);
+  await page.close();
 }
 
 // --- the production build must not hand out the answer ----------------------

@@ -25,6 +25,15 @@ export interface Release {
 /** Newest first. */
 export const RELEASES: Release[] = [
   {
+    version: '1.8.0',
+    date: '2026-09-08',
+    summary: 'The line is wider, and its colour tells you how far through you are.',
+    changes: [
+      { kind: 'changed', text: 'The line is thicker, and shifts from blue through violet to pink as the board fills, so how far through you are is readable at a glance. Numbers you have passed through take the line’s colour there.' },
+      { kind: 'changed', text: 'The number you are heading for is ringed in the colour the line will be when it arrives — a different colour each time, rather than a fixed highlight.' }
+    ]
+  },
+  {
     version: '1.7.0',
     date: '2026-09-08',
     summary: 'The clock starts when you see the board, not when you first move.',
