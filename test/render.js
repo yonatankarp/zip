@@ -10,6 +10,7 @@
  */
 import { launch, sleep, findChrome } from './browser.js';
 import { serve } from './serve.js';
+import { writeSync } from 'node:fs';
 
 if (!findChrome()) {
   console.log('render  skipped — no Chrome found (set CHROME=/path/to/chrome)');
@@ -23,6 +24,14 @@ const shotDir = process.argv.includes('--shots')
 const TIERS = ['easy', 'medium', 'hard', 'expert'];
 let checks = 0;
 let failures = 0;
+const started = Date.now();
+let sectionChecks = 0;
+const section = name => {
+  const secs = ((Date.now() - started) / 1000).toFixed(0).padStart(3);
+  writeSync(1, `  ${secs}s  ${name}\n`);
+  sectionChecks = checks;
+};
+
 const ok = (cond, msg) => { checks++; if (!cond) { failures++; console.log('  FAIL: ' + msg); } };
 
 /*
@@ -50,15 +59,27 @@ const pointsFor = (ax, ay) => `
 
 const POINTS = pointsFor(0.5, 0.5);
 
-const site = await serve('dist');
+// Behaviour is driven against dist-test, which differs from the deployed dist
+// only by the ?test hook flag. dist is served separately below and asserted to
+// carry no hook at all.
+const site = await serve('dist-test');
 const URL = `${site.origin}/index.html?test`;
+
+const ready = async page => {
+  await page.eval('return !!window.__zip');    // React has mounted and attached
+  // Generation runs in a worker, so the board arrives a beat after the hooks.
+  for (let i = 0; i < 100; i++) {
+    if (await page.eval('return !!window.__zip.state.puzzle')) return page;
+    await sleep(50);
+  }
+  throw new Error('no puzzle after 5s');
+};
 
 const open = async (opts = {}) => {
   const page = await launch(opts.launch ?? {});
   await page.setup({ scheme: 'dark', width: 520, height: 900, ...opts });
   await page.goto(URL);
-  await page.eval('return !!window.__zip');    // React has mounted and attached
-  return page;
+  return ready(page);
 };
 
 /*
@@ -105,6 +126,7 @@ const click = async (page, id) => {
 try {
 
 // --- renders in both colour schemes, no console errors ----------------------
+section('renders in both colour schemes, no console errors');
 let darkBg = null;
 for (const scheme of ['dark', 'light']) {
   const page = await open({ scheme });
@@ -139,13 +161,14 @@ for (const scheme of ['dark', 'light']) {
 }
 
 // --- the two routes to a light palette must agree ---------------------------
+section('the two routes to a light palette must agree');
 // The light tokens are declared twice: once under prefers-color-scheme for
 // system-light viewers, once under [data-theme="light"] for the pin button. If
 // those lists drift, the same user gets two different palettes.
 {
   const page = await open({ scheme: 'light' });
   const TOKENS = ['--bg', '--panel', '--board', '--line', '--ink', '--dim',
-                  '--accent', '--accent-ink', '--path', '--wall', '--shadow'];
+                  '--accent', '--accent-ink', '--path', '--path-btn', '--wall', '--shadow'];
   const read = `
     const cs = getComputedStyle(document.documentElement);
     return ${JSON.stringify(TOKENS)}.map(t => t + '=' + cs.getPropertyValue(t).trim());`;
@@ -160,6 +183,7 @@ for (const scheme of ['dark', 'light']) {
 }
 
 // --- layout holds across the width range ------------------------------------
+section('layout holds across the width range');
 {
   const page = await open();
   for (const width of [320, 360, 375, 390, 414, 430, 520, 768, 1024]) {
@@ -185,6 +209,7 @@ for (const scheme of ['dark', 'light']) {
 }
 
 // --- every tier solves by real dragging, aimed at centres and at corners -----
+section('every tier solves by real dragging, aimed at centres and at corners');
 for (const tier of TIERS) {
   for (const [name, [ax, ay]] of Object.entries(AIMS)) {
     const page = await open();
@@ -221,6 +246,7 @@ for (const tier of TIERS) {
 }
 
 // --- keyboard play ----------------------------------------------------------
+section('keyboard play');
 {
   const page = await open();
   await loadPuzzle(page, 'easy', 4242);
@@ -245,6 +271,7 @@ for (const tier of TIERS) {
 }
 
 // --- filling every cell but ending elsewhere is refused, and says why --------
+section('filling every cell but ending elsewhere is refused, and says why');
 {
   let fired = false;
   for (let seed = 0; seed < 400 && !fired; seed++) {
@@ -285,6 +312,7 @@ for (const tier of TIERS) {
 }
 
 // --- the line must follow the pointer, not jump a cell at a time -------------
+section('the line must follow the pointer, not jump a cell at a time');
 {
   const page = await open();
   await loadPuzzle(page, 'easy', 5150);
@@ -318,6 +346,7 @@ for (const tier of TIERS) {
 }
 
 // --- a fast flick along a straight run must not skip cells -------------------
+section('a fast flick along a straight run must not skip cells');
 {
   const page = await open();
   await loadPuzzle(page, 'medium', 2468);
@@ -345,6 +374,7 @@ for (const tier of TIERS) {
 }
 
 // --- the line must not be erasable by a stray movement ----------------------
+section('the line must not be erasable by a stray movement');
 {
   const page = await open();
   await loadPuzzle(page, 'medium', 3141);
@@ -368,6 +398,7 @@ for (const tier of TIERS) {
 }
 
 // --- hints: next move, direction, and rescuing a lost board -----------------
+section('hints: next move, direction, and rescuing a lost board');
 {
   const page = await open();
   await loadPuzzle(page, 'medium', 606);
@@ -442,6 +473,7 @@ for (const tier of TIERS) {
 }
 
 // --- a hinted solve never sets a record -------------------------------------
+section('a hinted solve never sets a record');
 {
   const page = await open();
   await page.eval("localStorage.setItem('zip.best.medium', '999999'); return 1");
@@ -459,6 +491,7 @@ for (const tier of TIERS) {
 }
 
 // --- audio: silent by default, and genuinely running once asked for ---------
+section('audio: silent by default, and genuinely running once asked for');
 {
   // No relaxing autoplay flag here: the browser's own policy must be satisfied.
   const page = await open({ launch: { autoplay: 'default' } });
@@ -476,7 +509,7 @@ for (const tier of TIERS) {
   // is the classic way audio silently does nothing.
   await page.eval("localStorage.setItem('zip.sound','all'); return 1");
   await page.goto(URL);
-  await page.eval('return !!window.__zip');
+  await ready(page);
   await loadPuzzle(page, 'easy', 8080);
   pts = await page.eval(POINTS);
   ok(await page.eval("return window.__zip.audio.mode === 'all'"), 'stored sound mode not restored');
@@ -513,6 +546,7 @@ for (const tier of TIERS) {
 }
 
 // --- every solve celebrates, and a personal best celebrates harder ----------
+section('every solve celebrates, and a personal best celebrates harder');
 const burst = async priorBest => {
   const page = await open();
   if (priorBest) await page.eval(`localStorage.setItem('zip.best.medium','${priorBest}'); return 1`);
@@ -546,6 +580,7 @@ const burst = async priorBest => {
 }
 
 // --- reduced motion drops the decoration, keeps the game --------------------
+section('reduced motion drops the decoration, keeps the game');
 {
   const page = await open({ reducedMotion: true });
   await page.eval("localStorage.setItem('zip.best.medium','999999'); return 1");
@@ -564,6 +599,7 @@ const burst = async priorBest => {
 }
 
 // --- the clock belongs to the puzzle, not the attempt -----------------------
+section('the clock belongs to the puzzle, not the attempt');
 // Restarting must not reset or pause it, or a run going badly could simply be
 // wiped to protect a best time.
 {
@@ -602,6 +638,7 @@ const burst = async priorBest => {
 }
 
 // --- the daily: same board for everyone, one result a day ------------------
+section('the daily: same board for everyone, one result a day');
 {
   // Deterministic: the same UTC day must produce byte-identical boards across
   // separate page loads, because the seed comes from the date and nothing else.
@@ -638,6 +675,7 @@ const burst = async priorBest => {
 }
 
 // --- backtracks are counted and reported ------------------------------------
+section('backtracks are counted and reported');
 {
   const page = await open();
   await page.eval("window.__zip.setMode('practice'); return 1");
@@ -668,6 +706,7 @@ const burst = async priorBest => {
 }
 
 // --- solving the daily records it, and the result is shareable --------------
+section('solving the daily records it, and the result is shareable');
 {
   const page = await open();
   const day = await page.eval('return window.__zip.day');
@@ -678,7 +717,7 @@ const burst = async priorBest => {
     }
     return 1;`);
   await page.goto(URL);
-  await page.eval('return !!window.__zip');
+  await ready(page);
   await stubClipboard(page);
   // `delete` cannot remove a prototype property, so shadow it instead -- and a
   // real drag grants transient activation, which would otherwise let the native
@@ -726,6 +765,7 @@ const burst = async priorBest => {
 }
 
 // --- practice mode still behaves ---------------------------------------------
+section('practice mode still behaves');
 {
   const page = await open();
   await page.eval("window.__zip.setMode('practice'); return 1");
@@ -742,6 +782,7 @@ const burst = async priorBest => {
 }
 
 // --- a superseded generation must not land on the board ---------------------
+section('a superseded generation must not land on the board');
 // Generation is deferred a frame, so two quick switches leave two in flight.
 {
   const page = await open();
@@ -754,7 +795,314 @@ const burst = async priorBest => {
   await page.close();
 }
 
+// --- a refresh must not reset the daily -------------------------------------
+section('a refresh must not reset the daily');
+// Restart deliberately keeps the clock; a reload used to hand out a clean board
+// and a zero clock, which was the same reset by another route.
+{
+  const page = await open();
+  const pts = await page.eval(POINTS);
+  await page.mouse('mousePressed', pts[0].x, pts[0].y);
+  for (let i = 1; i <= 7; i++) await page.mouse('mouseMoved', pts[i].x, pts[i].y);
+  await page.mouse('mouseMoved', pts[6].x, pts[6].y);        // one backtrack
+  await page.mouse('mouseReleased', pts[6].x, pts[6].y);
+  await sleep(1200);                                          // past the save throttle
+  const before = await page.eval(`return {
+    filled: window.__zip.state.path.length,
+    elapsed: window.__zip.state.elapsed,
+    path: JSON.stringify(window.__zip.state.path)
+  };`);
+  ok(before.filled === 7, `setup drew ${before.filled} cells, expected 7`);
+  ok(before.elapsed > 900, `clock only reached ${Math.round(before.elapsed)}ms`);
+
+  await page.goto(URL);
+  await ready(page);
+  await settle(page);
+  const after = await page.eval(`return {
+    filled: window.__zip.state.path.length,
+    elapsed: window.__zip.state.elapsed,
+    running: window.__zip.state.running,
+    path: JSON.stringify(window.__zip.state.path),
+    backtracksText: document.getElementById('backtracks')?.textContent ?? ''
+  };`);
+  ok(after.path === before.path, 'the drawn path was not restored after a reload');
+  ok(after.elapsed >= before.elapsed - 50,
+     `the clock reset on reload (${Math.round(before.elapsed)} -> ${Math.round(after.elapsed)})`);
+  ok(after.running === true, 'the clock did not resume after a reload');
+  ok(/↩\s*1\b/.test(after.backtracksText),
+     `backtracks were not restored (status read "${after.backtracksText}")`);
+
+  // A tampered or stale path must be discarded rather than trusted.
+  await page.eval(`
+    window.__zip.setMode('practice');                  // stops the save loop
+    const saved = JSON.parse(localStorage.getItem('zip.progress'));
+    saved.path = [saved.path[0], 999];                 // not even on the grid
+    localStorage.setItem('zip.progress', JSON.stringify(saved));
+    localStorage.setItem('zip.mode', 'daily');         // ...but reload as daily
+    return 1;`);
+  await sleep(1200);                                   // outlive any pending save
+  await page.goto(URL);
+  await ready(page);
+  await settle(page);
+  ok(await page.eval('return window.__zip.state.path.length') === 0,
+     'an illegal saved path was replayed instead of discarded');
+
+  // Finishing clears it, so tomorrow does not inherit today's run.
+  await page.drag(await page.eval(POINTS));
+  await sleep(300);
+  ok(await page.eval("return localStorage.getItem('zip.progress') === null"),
+     'progress was left behind after the daily was solved');
+  await page.close();
+}
+
+// --- accessibility ----------------------------------------------------------
+section('accessibility');
+const parseRgb = text => (text.match(/\d+(\.\d+)?/g) ?? []).slice(0, 3).map(Number);
+const luminance = ([r, g, b]) => {
+  const f = v => { const s = v / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+};
+const contrast = (a, b) => {
+  const [x, y] = [luminance(parseRgb(a)), luminance(parseRgb(b))].sort((m, n) => n - m);
+  return (x + 0.05) / (y + 0.05);
+};
+
+{
+  const page = await open();
+
+  // The <svg> mutates by hand and announces nothing on its own, so the
+  // accessible interface is the region around it plus a live region.
+  const shape = await page.eval(`
+    const region = document.querySelector('.board-region');
+    const live = document.getElementById('announcer');
+    const bar = document.querySelector('.progress');
+    return {
+      role: region?.getAttribute('role'),
+      tabindex: region?.getAttribute('tabindex'),
+      label: region?.getAttribute('aria-label'),
+      describedby: region?.getAttribute('aria-describedby'),
+      helpText: document.getElementById('boardHelp')?.textContent?.trim().slice(0, 40),
+      svgHidden: document.getElementById('board')?.getAttribute('aria-hidden'),
+      liveSetting: live?.getAttribute('aria-live'),
+      barRole: bar?.getAttribute('role'),
+      barMax: bar?.getAttribute('aria-valuemax')
+    };`);
+  ok(shape.role === 'application', `board region role is "${shape.role}"`);
+  ok(shape.tabindex === '0', 'the board cannot be reached by keyboard');
+  ok(/\d+ of \d+ squares filled/.test(shape.label ?? ''),
+     `board label does not carry state: "${shape.label}"`);
+  ok(!!shape.describedby && !!shape.helpText, 'the board has no described instructions');
+  ok(shape.svgHidden === 'true', 'the decorative svg is exposed to assistive tech');
+  ok(shape.liveSetting === 'polite', `live region is "${shape.liveSetting}"`);
+  ok(shape.barRole === 'progressbar' && shape.barMax === '36', 'progress bar is not exposed');
+
+  // Moves must be spoken, or the line is invisible to a screen reader.
+  const pts = await page.eval(POINTS);
+  await page.mouse('mousePressed', pts[0].x, pts[0].y);
+  await page.mouse('mouseMoved', pts[1].x, pts[1].y);
+  await page.mouse('mouseReleased', pts[1].x, pts[1].y);
+  await settle(page);
+  const spoken = await page.eval("return document.getElementById('announcer').textContent");
+  ok(/Row \d+, column \d+/.test(spoken), `nothing useful was announced: "${spoken}"`);
+  const labelNow = await page.eval("return document.querySelector('.board-region').getAttribute('aria-label')");
+  ok(/2 of 36 squares filled/.test(labelNow), `board label did not follow the move: "${labelNow}"`);
+  await page.close();
+}
+
+// --- keyboard focus is visible, and the arrows are not stolen ---------------
+section('keyboard focus is visible, and the arrows are not stolen');
+{
+  const page = await open();
+  const tab = async () => {
+    await page.send('Input.dispatchKeyEvent',
+      { type: 'rawKeyDown', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+    await page.send('Input.dispatchKeyEvent',
+      { type: 'keyUp', key: 'Tab', code: 'Tab', windowsVirtualKeyCode: 9 });
+  };
+  let ringed = 0;
+  let stops = 0;
+  for (let i = 0; i < 8; i++) {
+    await tab();
+    const at = await page.eval(`
+      const el = document.activeElement;
+      if (!el || el === document.body) return null;
+      const cs = getComputedStyle(el);
+      return { tag: el.tagName, outline: cs.outlineStyle, width: cs.outlineWidth };`);
+    if (!at) continue;
+    stops++;
+    if (at.outline !== 'none' && parseFloat(at.width) > 0) ringed++;
+  }
+  ok(stops >= 4, `only ${stops} elements were reachable by Tab`);
+  ok(ringed === stops, `${stops - ringed} of ${stops} focus stops showed no focus ring`);
+
+  // With a button focused, the arrows belong to the page, not the board.
+  await page.eval("document.getElementById('restartBtn').focus(); return 1");
+  const before = await page.eval('return window.__zip.state.path.length');
+  await page.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowRight', code: 'ArrowRight' });
+  await settle(page);
+  ok(await page.eval('return window.__zip.state.path.length') === before,
+     'an arrow key drew on the board while a button had focus');
+
+  // Focus the board and the same key works.
+  await page.eval("document.querySelector('.board-region').focus(); return 1");
+  await page.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'ArrowRight', code: 'ArrowRight' });
+  await settle(page);
+  ok(await page.eval('return window.__zip.state.path.length') > before,
+     'arrow keys do nothing even with the board focused');
+  await page.close();
+}
+
+// --- text contrast ----------------------------------------------------------
+section('text contrast');
+for (const scheme of ['dark', 'light']) {
+  const page = await open({ scheme });
+  const colours = await page.eval(`
+    const cs = getComputedStyle(document.body);
+    const dim = getComputedStyle(document.getElementById('tierStats'));
+    const btn = getComputedStyle(document.getElementById('newBtn'));
+    return {
+      bg: cs.backgroundColor, ink: cs.color,
+      dim: dim.color, dimBg: getComputedStyle(document.body).backgroundColor,
+      btnFg: btn.color, btnBg: btn.backgroundColor
+    };`);
+  const ink = contrast(colours.ink, colours.bg);
+  const dim = contrast(colours.dim, colours.dimBg);
+  const btn = contrast(colours.btnFg, colours.btnBg);
+  ok(ink >= 4.5, `${scheme}: body text contrast is ${ink.toFixed(2)}:1, below 4.5`);
+  ok(dim >= 4.5, `${scheme}: secondary text contrast is ${dim.toFixed(2)}:1, below 4.5`);
+  ok(btn >= 4.5, `${scheme}: primary button contrast is ${btn.toFixed(2)}:1, below 4.5`);
+  await page.close();
+}
+
+// --- generation runs off the main thread ------------------------------------
+section('generation runs off the main thread');
+{
+  const page = await open();
+  ok(await page.eval('return window.__zip.core.source.usingWorker === true'),
+     'puzzle generation is not using a worker');
+
+  // The main thread must stay responsive while an Expert board is generated.
+  await page.eval("window.__zip.setMode('practice'); return 1");
+  const stall = await page.eval(`
+    window.__zip.core.difficulty = 'expert';
+    let frames = 0;
+    const tick = () => { frames++; requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+    window.__zip.newPuzzle();
+    await new Promise(r => setTimeout(r, 700));
+    return frames;`);
+  // 700ms of unblocked frames is ~40+; a blocking generate would swallow many.
+  ok(stall > 25, `only ${stall} frames rendered while generating (main thread blocked)`);
+  await page.close();
+}
+
+// --- the production build must not hand out the answer ----------------------
+section('the production build must not hand out the answer');
+// The hook exposes the solution. That is fine on a random practice board and
+// not fine on a shared daily, so it must be absent from what actually ships.
+{
+  const shipped = await serve('dist');
+  const page = await launch();
+  await page.setup({ scheme: 'dark', width: 520, height: 900 });
+  await page.goto(`${shipped.origin}/index.html?test`);
+  await sleep(400);
+  ok(await page.eval('return typeof window.__zip === "undefined"'),
+     'the production build still exposes window.__zip');
+  ok(await page.eval("return !!document.querySelector('#board polyline')"),
+     'the production build did not render (so the check above proves nothing)');
+  // And the bundle should not even contain the hook's wiring.
+  const js = await page.eval(`
+    const src = document.querySelector('script[type=module]').src;
+    const r = await fetch(src);
+    return await r.text();`);
+  ok(!js.includes('__zip'), 'the production bundle still contains the test hook');
+
+  // ...and that the production build is the one that goes offline-capable.
+  for (let i = 0; i < 40; i++) {
+    if (await page.eval('return (await navigator.serviceWorker.getRegistrations()).length > 0')) break;
+    await sleep(100);
+  }
+  ok(await page.eval('return (await navigator.serviceWorker.getRegistrations()).length > 0'),
+     'the production build did not register a service worker');
+  await page.close();
+  await shipped.close();
+}
+
+// --- installable and offline ------------------------------------------------
+section('installable and offline');
+{
+  const page = await open();
+  const manifestHref = await page.eval(
+    "return document.querySelector('link[rel=manifest]')?.getAttribute('href') ?? null");
+  ok(manifestHref === './manifest.webmanifest', `manifest link is "${manifestHref}"`);
+  ok(await page.eval("return !!document.querySelector('link[rel=apple-touch-icon]')"),
+     'no apple-touch-icon for adding to a home screen');
+
+  const manifest = await (await fetch(`${site.origin}/manifest.webmanifest`)).json();
+  ok(manifest.display === 'standalone', `display is "${manifest.display}"`);
+  ok(manifest.start_url === './' && manifest.scope === './',
+     'manifest start_url/scope are not relative, so a subpath deploy breaks');
+  ok(!!manifest.theme_color && !!manifest.background_color, 'manifest has no colours');
+  const sizes = manifest.icons.map(i => i.sizes).sort();
+  ok(sizes.join(',') === '192x192,512x512,512x512', `icon sizes are ${sizes.join(',')}`);
+  ok(manifest.icons.some(i => i.purpose === 'maskable'),
+     'no maskable icon, so launchers will crop the art');
+
+  // Every icon the manifest names must actually be in the build, at its size.
+  for (const icon of manifest.icons) {
+    const res = await fetch(`${site.origin}/${icon.src.replace('./', '')}`);
+    ok(res.status === 200, `${icon.src} is missing (HTTP ${res.status})`);
+    const bytes = Buffer.from(await res.arrayBuffer());
+    ok(bytes.subarray(1, 4).toString() === 'PNG', `${icon.src} is not a PNG`);
+    // PNG stores width/height as big-endian 32-bit ints at offset 16.
+    const width = bytes.readUInt32BE(16);
+    const expected = Number(icon.sizes.split('x')[0]);
+    ok(width === expected, `${icon.src} is ${width}px wide, declared ${expected}`);
+  }
+
+  // A worker in front of the dev/test bundle would serve stale code.
+  ok(await page.eval('return (await navigator.serviceWorker.getRegistrations()).length === 0'),
+     'the test build registered a service worker');
+  await page.close();
+}
+
+// --- history: the results that were already being stored --------------------
+section('history: the results that were already being stored');
+{
+  const page = await open();
+  const day = await page.eval('return window.__zip.day');
+  ok(await page.eval("return !document.getElementById('history')"),
+     'a history strip is shown before anything has been solved');
+
+  await page.eval(`
+    const day = window.__zip.day;
+    const times = [52000, 41000, 63000, 47000];
+    times.forEach((ms, i) => localStorage.setItem('zip.daily.' + (day - i),
+      JSON.stringify({ day: day - i, ms, backtracks: i, hinted: i === 2 })));
+    return 1;`);
+  await page.goto(URL);
+  await ready(page);
+  await settle(page);
+
+  const strip = await page.eval(`
+    const el = document.getElementById('history');
+    return {
+      cells: el.querySelectorAll('i').length,
+      done: el.querySelectorAll('i.done').length,
+      hinted: el.querySelectorAll('i.hinted').length,
+      summary: el.querySelector('.history-summary').textContent
+    };`);
+  ok(strip.cells === Math.min(30, day), `history shows ${strip.cells} days`);
+  ok(strip.done === 3 && strip.hinted === 1,
+     `history marked ${strip.done} clean and ${strip.hinted} hinted, expected 3 and 1`);
+  ok(/4 solved/.test(strip.summary), `summary reads "${strip.summary}"`);
+  ok(/best 0:41\.0/.test(strip.summary), `best time wrong in "${strip.summary}"`);
+  ok(/median 0:47\.0/.test(strip.summary), `median wrong in "${strip.summary}"`);
+  await page.close();
+}
+
 // --- link previews ----------------------------------------------------------
+section('link previews');
 {
   const page = await open();
   const meta = await page.eval(`
@@ -784,6 +1132,7 @@ const burst = async priorBest => {
 }
 
 // --- sharing prefers the native sheet, and falls back to the clipboard ------
+section('sharing prefers the native sheet, and falls back to the clipboard');
 {
   const page = await open();
   await page.eval(`
@@ -791,7 +1140,7 @@ const burst = async priorBest => {
       JSON.stringify({ day: window.__zip.day, ms: 41300, backtracks: 2, hinted: false }));
     return 1;`);
   await page.goto(URL);
-  await page.eval('return !!window.__zip');
+  await ready(page);
   await settle(page);
   await stubClipboard(page);
 

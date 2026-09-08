@@ -75,3 +75,76 @@ export function shareText(result: DailyResult, days: number, url: string): strin
   ];
   return `${lines.join('\n')}\n${url}`;
 }
+
+/*
+ * In-progress state for today's board.
+ *
+ * Without this, reloading mid-solve hands you a fresh board and a zero clock --
+ * which is exactly the reset that Restart is deliberately not allowed to give
+ * you. Only the daily is kept: a practice reload draws a different puzzle
+ * anyway, so there is no run to preserve.
+ */
+export interface DailyProgress {
+  day: number;
+  path: number[];
+  elapsed: number;
+  backtracks: number;
+  hintsUsed: number;
+}
+
+const PROGRESS_KEY = 'zip.progress';
+
+export function readProgress(day: number): DailyProgress | null {
+  try {
+    const raw = localStorage.getItem(PROGRESS_KEY);
+    if (!raw) return null;
+    const saved = JSON.parse(raw) as DailyProgress;
+    if (saved.day !== day || !Array.isArray(saved.path)) return null;
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
+export function writeProgress(progress: DailyProgress): void {
+  try {
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify(progress));
+  } catch { /* storage full or blocked; losing progress is not worth throwing */ }
+}
+
+export function clearProgress(): void {
+  localStorage.removeItem(PROGRESS_KEY);
+}
+
+export interface HistoryEntry {
+  day: number;
+  result: DailyResult | null;
+}
+
+export interface HistorySummary {
+  entries: HistoryEntry[];
+  solved: number;
+  best: number | null;
+  median: number | null;
+}
+
+/*
+ * The last `span` days, oldest first. Every daily result has been on disk since
+ * the feature shipped; until now only the streak counter ever read it.
+ */
+export function history(today: number = dayNumber(), span = 30): HistorySummary {
+  const entries: HistoryEntry[] = [];
+  for (let day = Math.max(1, today - span + 1); day <= today; day++) {
+    entries.push({ day, result: readResult(day) });
+  }
+  const times = entries
+    .map(e => e.result?.ms)
+    .filter((ms): ms is number => typeof ms === 'number')
+    .sort((a, b) => a - b);
+  return {
+    entries,
+    solved: times.length,
+    best: times.length ? times[0]! : null,
+    median: times.length ? times[(times.length - 1) >> 1]! : null
+  };
+}

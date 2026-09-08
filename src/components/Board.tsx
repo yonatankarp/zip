@@ -3,22 +3,41 @@ import type { Snapshot } from '../game/core.ts';
 
 interface Props {
   ref: Ref<SVGSVGElement>;
+  regionRef: Ref<HTMLDivElement>;
+  announcerRef: Ref<HTMLDivElement>;
   snap: Snapshot;
 }
 
 /*
- * React owns the frame around the board -- the busy state, the banner, the
- * progress bar -- but never the board's contents. Everything inside the <svg>
- * is drawn imperatively by BoardView, because it changes on every pointermove
- * and every animation frame. That is a mutation workload, not a reconciliation
- * one, so the element is handed over by ref and React does not touch it again.
+ * React owns the frame around the board -- busy state, banner, progress bar --
+ * but never the board's contents. Everything inside the <svg> is drawn
+ * imperatively by BoardView, because it changes on every pointermove and every
+ * animation frame: a mutation workload, not a reconciliation one.
+ *
+ * For assistive technology the <svg> is decorative. The accessible interface is
+ * the focusable application region wrapping it, whose label carries the current
+ * state, plus a live region that announces each move as it happens.
  */
-export default function Board({ ref, snap }: Props) {
+export default function Board({ ref, regionRef, announcerRef, snap }: Props) {
   const progress = snap.total ? (snap.filled / snap.total) * 100 : 0;
+  const label =
+    `Zip board, ${snap.rows} by ${snap.cols}. ` +
+    `${snap.filled} of ${snap.total} squares filled. ` +
+    (snap.solved ? 'Solved.' : `Heading for number ${snap.nextNumber}.`);
+
   return (
     <>
       <div className="boardwrap">
-        <svg className={`board${snap.busy ? ' busy' : ''}`} id="board" ref={ref} />
+        <div
+          className="board-region"
+          role="application"
+          tabIndex={0}
+          aria-label={label}
+          aria-describedby="boardHelp"
+          ref={regionRef}
+        >
+          <svg className={`board${snap.busy ? ' busy' : ''}`} id="board" ref={ref} aria-hidden="true" />
+        </div>
         <div className={`banner${snap.banner ? ' show' : ''}`} id="banner">
           <b id="bannerText" style={{ color: bannerColour(snap) }}>
             {snap.banner?.text}
@@ -26,12 +45,21 @@ export default function Board({ ref, snap }: Props) {
           </b>
         </div>
       </div>
-      <div className="progress">
-        <i
-          id="progressFill"
-          className={snap.solved ? 'done' : ''}
-          style={{ width: `${progress}%` }}
-        />
+      <p id="boardHelp" className="sr-only">
+        Draw one line through every square, starting at number 1 and taking the
+        numbers in order, without crossing a wall. Use the arrow keys to extend
+        the line, U to undo a square, H for a hint, R to restart.
+      </p>
+      <div id="announcer" className="sr-only" aria-live="polite" aria-atomic="true" ref={announcerRef} />
+      <div
+        className="progress"
+        role="progressbar"
+        aria-label="Squares filled"
+        aria-valuemin={0}
+        aria-valuemax={snap.total}
+        aria-valuenow={snap.filled}
+      >
+        <i id="progressFill" className={snap.solved ? 'done' : ''} style={{ width: `${progress}%` }} />
       </div>
     </>
   );

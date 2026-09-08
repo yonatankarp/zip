@@ -22,16 +22,14 @@ export default function Status({ snap, onToggleAutoNext }: Props) {
         <div id="tierStats">{snap.difficultyLabel} · {snap.rows}×{snap.cols}</div>
         <div>best <b id="best">{snap.best === null ? '—' : formatTime(snap.best)}</b></div>
       </div>
-      <div className="status">
-        {snap.mode === 'practice'
-          ? (
-            <button className="chip" id="autoBtn" aria-pressed={snap.autoNext} onClick={onToggleAutoNext}>
-              <span className="dot" />Auto-next
-            </button>
-          )
-          : <span />}
-        <div id="session">{summary}</div>
-      </div>
+      {snap.mode === 'practice' && (
+        <div className="status">
+          <button className="chip" id="autoBtn" aria-pressed={snap.autoNext} onClick={onToggleAutoNext}>
+            <span className="dot" />Auto-next
+          </button>
+          <div id="session">{summary}</div>
+        </div>
+      )}
     </>
   );
 }

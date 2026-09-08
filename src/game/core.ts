@@ -14,8 +14,10 @@ import {
 import { BoardView, U, type Tip } from './board.ts';
 import { Audio, SOUND_MODES, type SoundMode } from './audio.ts';
 import { Fx } from './fx.ts';
+import { PuzzleSource } from './source.ts';
 import {
-  DAILY_TIER, dayNumber, readResult, seedForDay, shareText, streak, writeResult,
+  DAILY_TIER, clearProgress, dayNumber, readProgress, readResult, seedForDay,
+  shareText, streak, writeProgress, writeResult,
   type DailyResult
 } from './daily.ts';
 
@@ -49,6 +51,8 @@ export interface Snapshot {
   best: number | null;
   session: { solved: number; total: number; streak: number };
   banner: Banner | null;
+  /** The number the line is heading for next, for the board's accessible name. */
+  nextNumber: number;
   autoNext: boolean;
   soundMode: SoundMode;
   theme: Theme;
@@ -76,6 +80,8 @@ export class GameCore {
   private board: BoardView | null = null;
   private fx: Fx | null = null;
   private clockEl: HTMLElement | null = null;
+  private announcerEl: HTMLElement | null = null;
+  private regionEl: HTMLElement | null = null;
 
   private puzzle: Puzzle | null = null;
   private engine: Engine | null = null;
@@ -111,11 +117,13 @@ export class GameCore {
    * second. Every load claims a token; a stale generation drops its result.
    */
   private loadSeq = 0;
+  private savedAt = 0;
   private dirty = true;
   private listeners = new Set<(s: Snapshot) => void>();
   private detachers: Array<() => void> = [];
 
   readonly audio: Audio;
+  private readonly source = new PuzzleSource();
   difficulty: DifficultyName;
   mode: Mode;
   day = dayNumber();
@@ -149,6 +157,8 @@ export class GameCore {
     const up = (e: PointerEvent) => this.onPointerUp(e, boardSvg);
     const key = (e: KeyboardEvent) => this.onKey(e);
     const resize = () => this.board?.invalidateRect();
+    // A tab can be discarded without ever firing unload, so flush on the way out.
+    const leaving = () => this.saveProgress(true);
 
     boardSvg.addEventListener('pointerdown', down);
     boardSvg.addEventListener('pointermove', move);
@@ -157,6 +167,8 @@ export class GameCore {
     document.addEventListener('keydown', key);
     window.addEventListener('resize', resize);
     window.addEventListener('scroll', resize, true);
+    window.addEventListener('pagehide', leaving);
+    document.addEventListener('visibilitychange', leaving);
     this.detachers = [
       () => boardSvg.removeEventListener('pointerdown', down),
       () => boardSvg.removeEventListener('pointermove', move),
@@ -164,7 +176,9 @@ export class GameCore {
       () => boardSvg.removeEventListener('pointercancel', up),
       () => document.removeEventListener('keydown', key),
       () => window.removeEventListener('resize', resize),
-      () => window.removeEventListener('scroll', resize, true)
+      () => window.removeEventListener('scroll', resize, true),
+      () => window.removeEventListener('pagehide', leaving),
+      () => document.removeEventListener('visibilitychange', leaving)
     ];
 
     this.alive = true;
@@ -174,6 +188,7 @@ export class GameCore {
 
   destroy(): void {
     this.alive = false;                        // pending timers bail out
+    this.source.terminate();
     cancelAnimationFrame(this.frame);
     clearTimeout(this.advanceTimer);
     clearTimeout(this.bannerTimer);
@@ -183,6 +198,28 @@ export class GameCore {
   }
 
   bindClock(el: HTMLElement | null): void { this.clockEl = el; }
+  bindAnnouncer(el: HTMLElement | null): void { this.announcerEl = el; }
+  bindRegion(el: HTMLElement | null): void { this.regionEl = el; }
+
+  /*
+   * Spoken feedback for anyone who cannot see the line. Without this the game
+   * is unplayable with a screen reader: the board is an <svg> that changes by
+   * direct mutation, so nothing else would ever be announced.
+   */
+  private announce(text: string): void {
+    if (!this.announcerEl) return;
+    // Repeating identical text is not re-announced, so nudge it.
+    this.announcerEl.textContent = this.announcerEl.textContent === text ? `${text} ` : text;
+  }
+
+  private describe(cell: Cell): string {
+    const cols = this.puzzle!.cols;
+    const where = `Row ${((cell / cols) | 0) + 1}, column ${(cell % cols) + 1}`;
+    const number = this.engine!.numAt[cell]!;
+    return number
+      ? `${where}, number ${number} of ${this.puzzle!.waypoints.length}`
+      : where;
+  }
 
   subscribe(fn: (s: Snapshot) => void): () => void {
     this.listeners.add(fn);
@@ -220,6 +257,7 @@ export class GameCore {
       best: best === null ? null : Number(best),
       session: { ...this.session },
       banner: this.banner,
+      nextNumber: Math.min(this.numbersTaken() + 1, this.puzzle?.waypoints.length ?? 1),
       autoNext: this.autoNext,
       soundMode: this.audio.mode,
       theme: this.theme
@@ -247,6 +285,7 @@ export class GameCore {
     }
     this.board?.tick(now);
     this.fx?.tick(now);
+    this.saveProgress();
     if (this.dirty) {
       this.dirty = false;
       this.publish();
@@ -291,14 +330,17 @@ export class GameCore {
     } else {
       this.audio.step(this.path.length / this.engine!.n);
     }
+    this.announce(this.describe(cell));
     this.render();
     this.checkWin();
   }
 
   private pop(): void {
     if (this.path.length <= 1) return;
-    this.inPath[this.path.pop()!] = 0;
+    const removed = this.path.pop()!;
+    this.inPath[removed] = 0;
     this.backtracks++;
+    this.announce(`Backed out of ${this.describe(removed).toLowerCase()}`);
     this.solved = false;
     this.board?.clearHint();
     this.setBanner(null);
@@ -329,7 +371,9 @@ export class GameCore {
       this.render();
       this.recordSolve();
     } else {
-      this.setBanner({ text: 'Every cell filled, but the path must end on the last number.', kind: 'bad' });
+      const message = 'Every cell filled, but the path must end on the last number.';
+      this.setBanner({ text: message, kind: 'bad' });
+      this.announce(message);
     }
   }
 
@@ -368,6 +412,7 @@ export class GameCore {
         day: this.day, ms: Math.round(this.elapsed),
         backtracks: this.backtracks, hinted: this.hintsUsed > 0
       });
+      clearProgress();                         // the run is over
       const days = streak(this.day);
       this.setBanner({
         text: `Daily #${this.day} · ${formatTime(this.elapsed)}`,
@@ -410,6 +455,7 @@ export class GameCore {
 
   private setBanner(banner: Banner | null): void {
     this.banner = banner;
+    if (banner) this.announce(banner.sub ? `${banner.text}. ${banner.sub}` : banner.text);
     this.markDirty();
   }
 
@@ -417,10 +463,12 @@ export class GameCore {
 
   private prefetch(): void {
     const want = this.difficulty;
-    window.setTimeout(() => {
+    window.setTimeout(async () => {
       if (!this.alive || (this.prefetchedFor === want && this.prefetched)) return;
-      const puzzle = generateDifficulty(want);
-      if (puzzle) { this.prefetched = puzzle; this.prefetchedFor = want; }
+      const puzzle = await this.source.request(want);
+      if (!this.alive || !puzzle) return;
+      this.prefetched = puzzle;
+      this.prefetchedFor = want;
     }, 250);
   }
 
@@ -457,15 +505,13 @@ export class GameCore {
     this.setBanner({ text: 'Generating…', kind: 'wait' });
     this.publish();
     const seq = this.loadSeq;
-    window.setTimeout(() => {                  // let the frame paint before we block
+    void this.source.request(this.difficulty).then(puzzle => {
       if (!this.alive || seq !== this.loadSeq) return;   // superseded
-      const puzzle = generateDifficulty(this.difficulty);
-      if (seq !== this.loadSeq) return;
       this.busy = false;
       this.setBanner(null);
       if (puzzle) this.load(puzzle);
       this.prefetch();
-    }, 16);
+    });
   }
 
   /*
@@ -475,8 +521,58 @@ export class GameCore {
    */
   private loadDaily(): void {
     this.day = dayNumber();
-    const puzzle = generateDifficulty(DAILY_TIER, seedForDay(this.day));
-    if (puzzle) this.load(puzzle);
+    const seq = this.loadSeq;
+    void this.source.request(DAILY_TIER, seedForDay(this.day)).then(puzzle => {
+      if (!this.alive || seq !== this.loadSeq || !puzzle) return;
+      this.load(puzzle);
+      this.restoreProgress();
+    });
+  }
+
+  /*
+   * Replay a saved run, checking every step against the rules as it goes. A
+   * stored path could be stale or hand-edited; anything that does not replay
+   * cleanly is discarded rather than trusted.
+   */
+  private restoreProgress(): void {
+    const saved = readProgress(this.day);
+    if (!saved || readResult(this.day)) return;      // already finished today
+    const engine = this.engine!;
+    const path: Cell[] = [];
+    const inPath = new Uint8Array(this.inPath.length);
+    for (const cell of saved.path) {
+      if (!engine.canStep(path, inPath, cell)) return;
+      path.push(cell);
+      inPath[cell] = 1;
+    }
+    if (!path.length) return;
+    this.path = path;
+    this.inPath = inPath;
+    this.backtracks = saved.backtracks;
+    this.hintsUsed = saved.hintsUsed;
+    this.elapsed = saved.elapsed;
+    // The clock belongs to the puzzle, so it picks up where it left off rather
+    // than waiting for the next move.
+    this.timerStarted = true;
+    this.running = true;
+    this.startedAt = performance.now() - this.elapsed;
+    this.render();
+  }
+
+  /** Cheap enough to call every frame; throttled so storage is not hammered. */
+  private saveProgress(force = false): void {
+    if (this.mode !== 'daily' || !this.puzzle || this.solved || this.revealed) return;
+    const now = performance.now();
+    if (!force && now - this.savedAt < 1000) return;
+    this.savedAt = now;
+    if (!this.path.length) { clearProgress(); return; }
+    writeProgress({
+      day: this.day,
+      path: this.path.slice(),
+      elapsed: Math.round(this.elapsed),
+      backtracks: this.backtracks,
+      hintsUsed: this.hintsUsed
+    });
   }
 
   setMode(mode: Mode): void {
@@ -584,6 +680,7 @@ export class GameCore {
     if (to == null) return;
     this.hintsUsed++;
     this.board?.showHint(from, to);
+    this.announce(`Hint: go to ${this.describe(to).toLowerCase()}`);
     this.audio.blip();
     this.markDirty();
   }
@@ -699,10 +796,19 @@ export class GameCore {
     }
   }
 
+  private ownsKeyboard(): boolean {
+    const active = document.activeElement;
+    return !active || active === document.body || active === this.regionEl;
+  }
+
   private onKey(e: KeyboardEvent): void {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     this.audio.markInteracted();
     const arrow = ARROWS[e.key];
     if (arrow) {
+      // Claiming the arrows unconditionally stopped the page scrolling and
+      // hijacked them from focused controls.
+      if (!this.ownsKeyboard()) return;
       e.preventDefault();
       if (!this.puzzle) return;
       if (!this.path.length) { this.step(this.puzzle.waypoints[0]!); return; }

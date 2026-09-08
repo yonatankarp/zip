@@ -1,5 +1,10 @@
 # Zip
 
+An independent, from-scratch implementation of the puzzle idea behind
+LinkedIn's *Zip*. Not affiliated with, endorsed by, or connected to LinkedIn;
+no code or assets are taken from it. MIT licensed — see `LICENSE`.
+
+
 A playable clone of LinkedIn's *Zip* with a generator that produces random,
 guaranteed-solvable puzzles in four difficulties — built for speed training.
 
@@ -80,6 +85,36 @@ be an absolute URL, which pins the deployed origin in `index.html`.
 Both modes count **backtracks** — single-square retractions — the way the
 original reports them. It is a better measure of a run than time alone, because
 it counts how much you guessed.
+
+## Accessibility
+
+The board is an `<svg>` mutated by hand, which assistive technology cannot
+follow, so it is marked decorative and the accessible interface sits around it:
+a focusable `role="application"` region whose label carries the live state
+("14 of 36 squares filled, heading for number 5"), described by the rules and
+the keys, with a polite live region announcing every move ("Row 3, column 4,
+number 2 of 8"). The progress bar is a real `progressbar`. Focus rings are
+`:focus-visible` so keyboard users see where they are without pointer users
+getting a ring on every click.
+
+Arrow keys are only claimed when the board or nothing has focus — previously
+they were taken page-wide, which stopped scrolling and hijacked focused
+controls.
+
+Text contrast is asserted in the suite at 4.5:1 for body text, secondary text
+and the primary button, in both themes. That check immediately failed three
+ways, including white on the blue button at 3.25:1; the line colour and the
+button colour are now separate tokens, because a blue that reads well as a
+26 px stroke is too light to carry white text.
+
+## Installing and offline
+
+`public/manifest.webmanifest` plus a service worker make it installable to a
+home screen and playable with no network. The worker caches at runtime rather
+than precaching a build manifest: navigations are network-first so a deploy is
+never hidden behind the cache, and hashed assets are cache-first because their
+names change whenever their contents do. Icons are rendered from the same mark
+as the header by `tools/make-icons.js`.
 
 ## The rules
 
@@ -217,6 +252,8 @@ header.
 index.html          Vite entry
 src/engine/zip.ts   generation, solving, difficulty measurement (no DOM)
 src/game/core.ts    rules, input, timing, snapshots for React
+src/game/source.ts  puzzles from a worker, or directly if there is none
+src/game/generate.worker.ts
 src/game/board.ts   imperative SVG renderer
 src/game/fx.ts      the celebration layer
 src/game/audio.ts   oscillator sound
@@ -229,7 +266,14 @@ test/render.js      the built app in real Chrome: rendering, input, everything
 test/all.sh         runs all three
 test/calibrate.js   difficulty sweep; run when tier shapes change, not in CI
 tools/make-og.js    regenerates the link-preview card from the live renderer
+tools/make-icons.js regenerates the app icons from the header mark
+public/sw.js        runtime-caching service worker
 ```
+
+Generation runs in a **Web Worker**. An Expert board takes ~60 ms on a laptop
+and several times that on a phone, which is long enough to drop frames on the
+board still on screen. If the browser has no worker the same call runs directly
+after yielding a frame, so nothing depends on it.
 
 There is one UI suite now, and it drives the same bundle that gets deployed.
 The old DOM-stub suite existed because there was no browser available; a stub
