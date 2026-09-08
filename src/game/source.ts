@@ -6,6 +6,7 @@
  * depends on the worker existing. Callers cannot tell which they got.
  */
 import { generateDifficulty, type DifficultyName, type Puzzle } from '../engine/zip.ts';
+import { generateDaily } from './daily.ts';
 import type { GenerateReply, GenerateRequest } from './generate.worker.ts';
 
 export class PuzzleSource {
@@ -39,15 +40,24 @@ export class PuzzleSource {
     for (const settle of stranded) settle(null);
   }
 
-  request(tier: DifficultyName, seed?: number): Promise<Puzzle | null> {
+  requestDaily(seed: number): Promise<Puzzle | null> {
+    return this.dispatch({ kind: 'daily', seed }, () => generateDaily(seed));
+  }
+
+  requestTier(tier: DifficultyName, seed?: number): Promise<Puzzle | null> {
+    return this.dispatch({ kind: 'tier', tier, seed }, () => generateDifficulty(tier, seed));
+  }
+
+  private dispatch(
+    request: Omit<GenerateRequest, 'id'>,
+    directly: () => Puzzle | null
+  ): Promise<Puzzle | null> {
     if (!this.worker) {
       // Yield a frame first so the caller can paint before this blocks.
-      return new Promise(resolve => {
-        setTimeout(() => resolve(generateDifficulty(tier, seed)), 0);
-      });
+      return new Promise(resolve => { setTimeout(() => resolve(directly()), 0); });
     }
     const id = ++this.seq;
-    const message: GenerateRequest = { id, tier, seed };
+    const message: GenerateRequest = { id, ...request };
     return new Promise(resolve => {
       this.waiting.set(id, resolve);
       this.worker!.postMessage(message);

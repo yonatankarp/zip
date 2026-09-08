@@ -996,6 +996,137 @@ section('generation runs off the main thread');
   await page.close();
 }
 
+// --- the daily rolls over at UTC midnight -----------------------------------
+section('the daily rolls over at UTC midnight');
+{
+  const page = await open();
+  const before = await page.eval(`return {
+    day: window.__zip.day,
+    board: JSON.stringify(window.__zip.state.puzzle.waypoints)
+  };`);
+
+  // Mid-run, the board must not be swapped out from underneath the player.
+  const pts = await page.eval(POINTS);
+  await page.mouse('mousePressed', pts[0].x, pts[0].y);
+  await page.mouse('mouseMoved', pts[1].x, pts[1].y);
+  await page.mouse('mouseReleased', pts[1].x, pts[1].y);
+  await page.eval('window.__zip.useClock(() => new Date(Date.now() + 86400000)); return 1');
+  await page.eval('window.__zip.checkRollover(); return 1');
+  await sleep(300);
+  const during = await page.eval('return window.__zip.day');
+  ok(during === before.day, `a run in progress was interrupted by the rollover (${before.day} -> ${during})`);
+
+  // Once the run is cleared, the new day's board loads.
+  await click(page, 'restartBtn');
+  await page.eval('window.__zip.checkRollover(); return 1');
+  // Wait for the board, not the day: the day is only meaningful once the board
+  // it names is actually on screen.
+  for (let i = 0; i < 60; i++) {
+    const board = await page.eval('return JSON.stringify(window.__zip.state.puzzle.waypoints)');
+    if (board !== before.board) break;
+    await sleep(50);
+  }
+  const after = await page.eval(`return {
+    day: window.__zip.day,
+    board: JSON.stringify(window.__zip.state.puzzle.waypoints),
+    filled: window.__zip.state.path.length
+  };`);
+  ok(after.day === before.day + 1, `day went ${before.day} -> ${after.day}, expected +1`);
+  ok(after.board !== before.board, 'the new day served the same board');
+  ok(after.filled === 0, 'the new day started with a drawn path');
+  await settle(page);
+  ok(new RegExp('Daily #' + after.day).test(
+       await page.eval("return document.getElementById('dayNumber').textContent")),
+     'the daily bar still names yesterday');
+  await page.close();
+}
+
+// --- the changelog page -----------------------------------------------------
+section('the changelog page');
+{
+  const page = await open();
+
+  // A version people can quote, and a mark when it is one they have not seen.
+  const chip = await page.eval("return document.getElementById('versionBtn')?.textContent ?? null");
+  ok(/^v\d+\.\d+\.\d+/.test(chip ?? ''), `version chip reads "${chip}"`);
+  ok(await page.eval("return !!document.getElementById('versionPip')"),
+     'no unseen-release marker on a first visit');
+  ok(await page.eval("return !document.getElementById('changelog')"),
+     'the changelog is open before it is asked for');
+
+  await click(page, 'versionBtn');
+  await settle(page);
+  ok(await page.eval("return location.hash === '#changelog'"), 'opening did not set the fragment');
+  ok(await page.eval("return !!document.getElementById('changelog')"), 'the changelog did not open');
+  ok(await page.eval("return !document.getElementById('versionPip')"),
+     'the unseen marker survived opening the changelog');
+
+  const dialog = await page.eval(`
+    const p = document.querySelector('.sheet-panel');
+    return {
+      role: p?.getAttribute('role'),
+      modal: p?.getAttribute('aria-modal'),
+      labelled: document.getElementById(p?.getAttribute('aria-labelledby') ?? '')?.textContent,
+      focused: document.activeElement === p,
+      releases: document.querySelectorAll('.release').length,
+      versions: [...document.querySelectorAll('.release-version')].map(e => e.textContent),
+      bodyScroll: getComputedStyle(document.body).overflow
+    };`);
+  ok(dialog.role === 'dialog' && dialog.modal === 'true', 'the panel is not an accessible dialog');
+  ok(!!dialog.labelled, 'the dialog has no accessible name');
+  ok(dialog.focused, 'focus did not move into the dialog');
+  ok(await page.eval("return getComputedStyle(document.querySelector('.sheet-panel')).outlineStyle === 'none'"),
+     'the dialog container draws a focus ring; that belongs on the controls');
+  ok(dialog.releases >= 5, `only ${dialog.releases} releases rendered`);
+  ok(dialog.bodyScroll === 'hidden', 'the page behind the sheet still scrolls');
+
+  // Newest first, and the chip agrees with the top entry.
+  const ranked = dialog.versions.map(v => v.split('.').map(Number));
+  const ordered = ranked.every((v, i) => i === 0 ||
+    (v[0] < ranked[i - 1][0]) ||
+    (v[0] === ranked[i - 1][0] && v[1] < ranked[i - 1][1]) ||
+    (v[0] === ranked[i - 1][0] && v[1] === ranked[i - 1][1] && v[2] < ranked[i - 1][2]));
+  ok(ordered, `releases are not newest-first: ${dialog.versions.join(', ')}`);
+  ok(chip.startsWith(`v${dialog.versions[0]}`),
+     `chip says ${chip} but the newest entry is ${dialog.versions[0]}`);
+
+  // Escape closes it, and the fragment goes back with it.
+  await page.send('Input.dispatchKeyEvent',
+    { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await sleep(200);
+  await settle(page);
+  ok(await page.eval("return !document.getElementById('changelog')"), 'Escape did not close the changelog');
+  ok(await page.eval("return location.hash !== '#changelog'"), 'the fragment was left behind');
+  ok(await page.eval("return getComputedStyle(document.body).overflow !== 'hidden'"),
+     'page scrolling was not restored');
+  ok(await page.eval("return !!document.querySelector('#board polyline')"),
+     'the board did not survive the changelog');
+  await page.close();
+}
+
+// --- the changelog is deep-linkable -----------------------------------------
+section('the changelog is deep-linkable');
+{
+  const page = await launch();
+  await page.setup({ scheme: 'dark', width: 520, height: 900 });
+  await page.goto(`${site.origin}/index.html?test#changelog`);
+  await ready(page);
+  await settle(page);
+  ok(await page.eval("return !!document.getElementById('changelog')"),
+     'a shared #changelog link did not open the page');
+  await click(page, 'changelogClose');
+  await settle(page);
+  ok(await page.eval("return !document.getElementById('changelog')"), 'the close button did nothing');
+  // Closing a deep link must not walk off the site: there is no entry of ours
+  // behind it to go back to.
+  ok(await page.eval("return location.pathname.endsWith('/index.html')"),
+     'closing a shared changelog link navigated away from the game');
+  ok(await page.eval("return location.hash === ''"), 'the fragment was left in the address bar');
+  ok(await page.eval("return !!document.querySelector('#board polyline')"),
+     'the board is gone after closing a deep-linked changelog');
+  await page.close();
+}
+
 // --- the production build must not hand out the answer ----------------------
 section('the production build must not hand out the answer');
 // The hook exposes the solution. That is fine on a random practice board and

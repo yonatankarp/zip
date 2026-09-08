@@ -18,6 +18,8 @@ npm run build          # typecheck, then bundle to dist/
 ./test/all.sh          # everything below
 node test/verify.js    # generated puzzles per tier, all invariants
 node test/play.js      # interaction rules
+node test/daily.js     # date rollover, seeding, storage versioning, streaks
+node test/changelog.js # release data, and CHANGELOG.md in step with it
 node test/render.js    # the built app in real Chrome, driven by real input
 ```
 
@@ -115,6 +117,21 @@ than precaching a build manifest: navigations are network-first so a deploy is
 never hidden behind the cache, and hashed assets are cache-first because their
 names change whenever their contents do. Icons are rendered from the same mark
 as the header by `tools/make-icons.js`.
+
+## Releases
+
+`src/changelog.ts` is the single source of truth for what shipped when.
+`CHANGELOG.md` is generated from it by `tools/make-changelog.js`, and
+`test/changelog.js` fails if the two drift, so they cannot quietly disagree.
+The in-app page opens from the version number below the board, or directly at
+`#changelog` — a fragment rather than a route, so it is linkable and closable
+with Back without needing a router or a second HTML file on a static host.
+
+Entries are written for players. A test rejects any that read like commit
+messages, because that is the direction this kind of file always rots in.
+
+Version numbers map to **deploys, not commits**: several early commits went out
+in a single push and were never separately live.
 
 ## The rules
 
@@ -254,6 +271,7 @@ src/engine/zip.ts   generation, solving, difficulty measurement (no DOM)
 src/game/core.ts    rules, input, timing, snapshots for React
 src/game/source.ts  puzzles from a worker, or directly if there is none
 src/game/generate.worker.ts
+src/changelog.ts    release notes, the source of truth for CHANGELOG.md
 src/game/board.ts   imperative SVG renderer
 src/game/fx.ts      the celebration layer
 src/game/audio.ts   oscillator sound

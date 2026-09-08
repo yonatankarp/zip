@@ -16,8 +16,8 @@ import { Audio, SOUND_MODES, type SoundMode } from './audio.ts';
 import { Fx } from './fx.ts';
 import { PuzzleSource } from './source.ts';
 import {
-  DAILY_TIER, clearProgress, dayNumber, readProgress, readResult, seedForDay,
-  shareText, streak, writeProgress, writeResult,
+  clearProgress, dayNumber, fingerprint, readProgress, readResult, seedForDay,
+  setClock, shareText, streak, writeProgress, writeResult,
   type DailyResult
 } from './daily.ts';
 
@@ -118,6 +118,7 @@ export class GameCore {
    */
   private loadSeq = 0;
   private savedAt = 0;
+  private loadingDay: number | null = null;
   private dirty = true;
   private listeners = new Set<(s: Snapshot) => void>();
   private detachers: Array<() => void> = [];
@@ -159,6 +160,7 @@ export class GameCore {
     const resize = () => this.board?.invalidateRect();
     // A tab can be discarded without ever firing unload, so flush on the way out.
     const leaving = () => this.saveProgress(true);
+    const returning = () => { if (!document.hidden) this.checkRollover(); };
 
     boardSvg.addEventListener('pointerdown', down);
     boardSvg.addEventListener('pointermove', move);
@@ -169,6 +171,7 @@ export class GameCore {
     window.addEventListener('scroll', resize, true);
     window.addEventListener('pagehide', leaving);
     document.addEventListener('visibilitychange', leaving);
+    document.addEventListener('visibilitychange', returning);
     this.detachers = [
       () => boardSvg.removeEventListener('pointerdown', down),
       () => boardSvg.removeEventListener('pointermove', move),
@@ -178,7 +181,8 @@ export class GameCore {
       () => window.removeEventListener('resize', resize),
       () => window.removeEventListener('scroll', resize, true),
       () => window.removeEventListener('pagehide', leaving),
-      () => document.removeEventListener('visibilitychange', leaving)
+      () => document.removeEventListener('visibilitychange', leaving),
+      () => document.removeEventListener('visibilitychange', returning)
     ];
 
     this.alive = true;
@@ -198,6 +202,28 @@ export class GameCore {
   }
 
   bindClock(el: HTMLElement | null): void { this.clockEl = el; }
+
+  /*
+   * Tests drive the UTC-midnight boundary through this. It deliberately does
+   * not update `day`: that tracks the board currently loaded, and letting it
+   * jump here would hide the rollover this exists to exercise.
+   */
+  useClock(fn: () => Date): void {
+    setClock(fn);
+  }
+
+  /*
+   * A tab left open across midnight would otherwise keep serving yesterday's
+   * board forever. Switch when the run is idle; leave a run in progress alone,
+   * because swapping the board out from under someone mid-solve is worse -- it
+   * finishes and is recorded against the day it was started.
+   */
+  private checkRollover(): void {
+    if (this.mode !== 'daily') return;
+    const today = dayNumber();
+    if (today === this.day) return;
+    if (this.path.length === 0 || this.solved || this.revealed) this.loadDaily();
+  }
   bindAnnouncer(el: HTMLElement | null): void { this.announcerEl = el; }
   bindRegion(el: HTMLElement | null): void { this.regionEl = el; }
 
@@ -233,11 +259,11 @@ export class GameCore {
 
   /** The daily is one fixed size; practice follows the chosen tier. */
   private tier(): DifficultyName {
-    return this.mode === 'daily' ? DAILY_TIER : this.difficulty;
+    return this.mode === 'daily' ? 'medium' : this.difficulty;
   }
 
   snapshot(): Snapshot {
-    const preset = DIFFICULTIES[this.tier()];
+    const preset = DIFFICULTIES[this.mode === 'daily' ? 'medium' : this.difficulty];
     const best = localStorage.getItem(this.bestKey());
     return {
       ready: !!this.puzzle,
@@ -410,7 +436,8 @@ export class GameCore {
       const first = !readResult(this.day);
       writeResult({
         day: this.day, ms: Math.round(this.elapsed),
-        backtracks: this.backtracks, hinted: this.hintsUsed > 0
+        backtracks: this.backtracks, hinted: this.hintsUsed > 0,
+        board: fingerprint(this.puzzle!)
       });
       clearProgress();                         // the run is over
       const days = streak(this.day);
@@ -465,7 +492,7 @@ export class GameCore {
     const want = this.difficulty;
     window.setTimeout(async () => {
       if (!this.alive || (this.prefetchedFor === want && this.prefetched)) return;
-      const puzzle = await this.source.request(want);
+      const puzzle = await this.source.requestTier(want);
       if (!this.alive || !puzzle) return;
       this.prefetched = puzzle;
       this.prefetchedFor = want;
@@ -505,7 +532,7 @@ export class GameCore {
     this.setBanner({ text: 'Generating…', kind: 'wait' });
     this.publish();
     const seq = this.loadSeq;
-    void this.source.request(this.difficulty).then(puzzle => {
+    void this.source.requestTier(this.difficulty).then(puzzle => {
       if (!this.alive || seq !== this.loadSeq) return;   // superseded
       this.busy = false;
       this.setBanner(null);
@@ -520,10 +547,16 @@ export class GameCore {
    * daily mode, since there is nothing else to move on to.
    */
   private loadDaily(): void {
-    this.day = dayNumber();
+    const day = dayNumber();
+    if (this.loadingDay === day) return;       // already on its way
+    this.loadingDay = day;
     const seq = this.loadSeq;
-    void this.source.request(DAILY_TIER, seedForDay(this.day)).then(puzzle => {
+    void this.source.requestDaily(seedForDay(day)).then(puzzle => {
+      this.loadingDay = null;
       if (!this.alive || seq !== this.loadSeq || !puzzle) return;
+      // Only now: generation is asynchronous, and moving the day first meant
+      // the bar could name a new day while the previous board was still up.
+      this.day = day;
       this.load(puzzle);
       this.restoreProgress();
     });
@@ -537,6 +570,12 @@ export class GameCore {
   private restoreProgress(): void {
     const saved = readProgress(this.day);
     if (!saved || readResult(this.day)) return;      // already finished today
+    // A run saved against a different board -- because the generator changed --
+    // cannot be replayed onto this one.
+    if (saved.board && saved.board !== fingerprint(this.puzzle!)) {
+      clearProgress();
+      return;
+    }
     const engine = this.engine!;
     const path: Cell[] = [];
     const inPath = new Uint8Array(this.inPath.length);
@@ -568,6 +607,7 @@ export class GameCore {
     if (!this.path.length) { clearProgress(); return; }
     writeProgress({
       day: this.day,
+      board: fingerprint(this.puzzle),
       path: this.path.slice(),
       elapsed: Math.round(this.elapsed),
       backtracks: this.backtracks,
@@ -840,6 +880,8 @@ export class GameCore {
       newPuzzle: () => core.newPuzzle(),
       audio: core.audio,
       generate: generateDifficulty,
+      useClock: (fn: () => Date) => core.useClock(fn),
+      checkRollover: () => core.checkRollover(),
       setMode: (mode: Mode) => core.setMode(mode),
       share: () => core.share(),
       get day() { return core.day; },
