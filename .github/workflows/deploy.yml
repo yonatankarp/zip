@@ -1,4 +1,4 @@
-name: Test and deploy
+name: Publish the redirect
 
 on:
   push:
@@ -16,37 +16,19 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci
-      # The runner image ships Chrome, so the real-browser suite runs here too;
-      # test/render.js skips itself if it cannot find one.
-      - name: Run the suite
-        run: ./test/all.sh 100
-
+  # The game moved to github.com/yonatankarp/puzzles. What is published here is
+  # a redirect and a worker that retires the old installed copy; the sources are
+  # kept for history and are no longer built or tested.
   deploy:
-    needs: test
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-      - run: npm ci
-      - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: site
       - id: deployment
         uses: actions/deploy-pages@v4

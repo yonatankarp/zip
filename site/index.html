@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Zip has moved</title>
+<link rel="canonical" href="https://yonatankarp.com/puzzles/">
+<link rel="icon" href="https://yonatankarp.com/puzzles/icon-192.png">
+<!-- No-JS fallback. Slow enough that the cleanup below normally wins first. -->
+<meta http-equiv="refresh" content="3; url=https://yonatankarp.com/puzzles/">
+<style>
+  :root { color-scheme: dark light; }
+  body {
+    margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px;
+    background: #0e1014; color: #e9edf5; text-align: center;
+    font: 400 17px/1.6 ui-sans-serif, -apple-system, "SF Pro Text", Inter, system-ui, sans-serif;
+  }
+  h1 { font-size: 25px; font-weight: 600; margin: 0 0 10px; letter-spacing: -.02em; }
+  p { color: #868fa3; margin: 0 0 22px; }
+  a {
+    display: inline-block; padding: 12px 22px; border-radius: 12px;
+    background: #f5b544; color: #14161c; font-weight: 600; text-decoration: none;
+  }
+</style>
+<h1>Zip has moved</h1>
+<p>It now lives with the other puzzles. Taking you there&nbsp;&hellip;</p>
+<a href="https://yonatankarp.com/puzzles/">Go to Puzzles</a>
+<script>
+  /*
+   * Anyone who installed Zip has a service worker registered at /zip/ and its
+   * caches on this origin. Left alone it would go on serving the old app to
+   * them for as long as the install lasts, so retire it before leaving.
+   *
+   * Both filters are deliberately narrow. getRegistrations() returns every
+   * registration on the origin -- including the one /puzzles/ relies on -- and
+   * caches.keys() likewise returns every cache, so unregistering or deleting
+   * indiscriminately here would break the site we are sending people to.
+   */
+  var DEST = 'https://yonatankarp.com/puzzles/';
+
+  function unregisterOldWorker() {
+    if (!navigator.serviceWorker || !navigator.serviceWorker.getRegistrations) return Promise.resolve();
+    return navigator.serviceWorker.getRegistrations().then(function (regs) {
+      return Promise.all(regs
+        .filter(function (r) { return r.scope.indexOf('/zip/') !== -1; })
+        .map(function (r) { return r.unregister(); }));
+    });
+  }
+
+  function dropOldCaches() {
+    if (!window.caches || !caches.keys) return Promise.resolve();
+    return caches.keys().then(function (names) {
+      return Promise.all(names
+        .filter(function (n) { return n.indexOf('zip-') === 0; })
+        .map(function (n) { return caches.delete(n); }));
+    });
+  }
+
+  function leave() { location.replace(DEST); }
+
+  function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
+  /*
+   * Twice, and in this order. The old worker is still controlling this very
+   * navigation, and its fetch handler puts the page it just served back into
+   * its cache -- so a single sweep races that write and loses, leaving the
+   * cache recreated behind us. Let the worker go, sweep, let the in-flight
+   * write land, sweep again.
+   */
+  Promise.race([
+    unregisterOldWorker()
+      .then(dropOldCaches)
+      .then(function () { return wait(500); })
+      .then(dropOldCaches)
+      .catch(function () {}),
+    wait(2500)
+  ]).then(leave, leave);
+</script>
