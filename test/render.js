@@ -65,21 +65,40 @@ const POINTS = pointsFor(0.5, 0.5);
 const site = await serve('dist-test');
 const URL = `${site.origin}/index.html?test`;
 
-const ready = async page => {
+/*
+ * Wait for a usable board. Boards arrive covered with the clock stopped, and
+ * most suites are about play rather than about the gate, so this uncovers by
+ * default -- pass { reveal: false } to exercise the count-in itself.
+ */
+const ready = async (page, { reveal = true } = {}) => {
   await page.eval('return !!window.__zip');    // React has mounted and attached
   // Generation runs in a worker, so the board arrives a beat after the hooks.
+  let arrived = false;
   for (let i = 0; i < 100; i++) {
-    if (await page.eval('return !!window.__zip.state.puzzle')) return page;
+    if (await page.eval('return !!window.__zip.state.puzzle')) { arrived = true; break; }
     await sleep(50);
   }
-  throw new Error('no puzzle after 5s');
+  if (!arrived) throw new Error('no puzzle after 5s');
+  if (reveal) {
+    await page.eval('window.__zip.reveal(); return 1');
+    // The reveal publishes on the next animation frame, and until React has
+    // re-rendered the board still carries pointer-events: none. Dragging before
+    // that lands on nothing.
+    await page.eval('return new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))');
+  }
+  return page;
 };
 
+/*
+ * Boards now start covered, with the clock beginning on reveal. Most suites are
+ * about play rather than about the gate, so they skip the count-in; pass
+ * { gate: true } to exercise it.
+ */
 const open = async (opts = {}) => {
   const page = await launch(opts.launch ?? {});
   await page.setup({ scheme: 'dark', width: 520, height: 900, ...opts });
   await page.goto(URL);
-  return ready(page);
+  return ready(page, { reveal: !opts.gate });
 };
 
 /*
@@ -96,6 +115,7 @@ const loadPuzzle = async (page, tier, seed) => {
   // they run in practice mode and hand the core a puzzle directly.
   await page.eval(`window.__zip.setMode('practice'); return 1`);
   await page.eval(`window.__zip.load(window.__zip.generate('${tier}', ${seed})); return 1`);
+  await page.eval('window.__zip.reveal(); return 1');   // a fresh board is covered
   await settle(page);
 };
 
@@ -1125,6 +1145,84 @@ section('the changelog is deep-linkable');
   ok(await page.eval("return !!document.querySelector('#board polyline')"),
      'the board is gone after closing a deep-linked changelog');
   await page.close();
+}
+
+// --- the clock starts when the board is revealed ----------------------------
+section('the clock starts when the board is revealed');
+{
+  const page = await open({ gate: true });
+  const covered = await page.eval(`return {
+    covered: document.getElementById('board').classList.contains('covered'),
+    numbers: document.querySelectorAll('#board text').length,
+    walls: document.querySelectorAll('#board g[stroke="var(--wall)"] line').length,
+    rules: document.querySelectorAll('#board line').length,
+    start: !!document.getElementById('startBtn'),
+    clock: document.getElementById('clock').textContent,
+    phase: window.__zip.core.snapshot().phase
+  };`);
+  ok(covered.covered, 'the board is legible before it is revealed');
+  ok(covered.numbers === 0 && covered.walls === 0,
+     `a covered board drew ${covered.numbers} numbers and ${covered.walls} walls — that is studyable`);
+  ok(covered.rules > 0, 'a covered board shows no grid at all, so you cannot see what size it is');
+  ok(covered.start, 'no Start control on a covered board');
+  ok(covered.phase === 'ready', `phase is "${covered.phase}"`);
+  ok(covered.clock === '0:00.0', `the clock reads ${covered.clock} before the reveal`);
+
+  // Studying is free, but only because nothing can be drawn yet.
+  const pts = await page.eval(POINTS);
+  await page.drag(pts.slice(0, 5));
+  await sleep(400);
+  ok(await page.eval('return window.__zip.state.path.length') === 0,
+     'the board accepted input before it was revealed');
+  ok(await page.eval("return document.getElementById('clock').textContent") === '0:00.0',
+     'the clock ran before the reveal');
+
+  // Start counts in, then uncovers and starts the clock together.
+  await click(page, 'startBtn');
+  await settle(page);
+  ok(await page.eval("return !!document.getElementById('countdown')"), 'no count-in after Start');
+  const first = await page.eval("return document.getElementById('countdown').textContent");
+  ok(first === '3', `count-in began at "${first}"`);
+  for (let i = 0; i < 60; i++) {
+    if (await page.eval("return window.__zip.core.snapshot().phase") === 'playing') break;
+    await sleep(100);
+  }
+  await settle(page);
+  ok(await page.eval("return !document.getElementById('board').classList.contains('covered')"),
+     'the board is still covered after the count-in');
+  ok(await page.eval("return !document.getElementById('readyGate')"), 'the gate outlived the count-in');
+  ok(await page.eval("return document.querySelectorAll('#board text').length >= 4"),
+     'the numbers were never drawn after the reveal');
+
+  // The clock runs from the reveal, with no move made.
+  await sleep(1000);
+  const idle = await page.eval('return window.__zip.state.elapsed');
+  ok(idle > 900, `the clock only reached ${Math.round(idle)}ms without a move — it is still waiting for one`);
+  ok(await page.eval('return window.__zip.state.path.length') === 0, 'a move was made by accident');
+  await page.close();
+}
+
+// --- space starts it too, and auto-next does not ask again ------------------
+section('space starts it, and auto-next counts itself in');
+{
+  const page = await open({ gate: true });
+  await page.send('Input.dispatchKeyEvent',
+    { type: 'rawKeyDown', key: ' ', code: 'Space', windowsVirtualKeyCode: 32 });
+  await settle(page);
+  ok(await page.eval("return window.__zip.core.snapshot().phase") !== 'ready',
+     'space did not start the puzzle');
+  await page.close();
+
+  // In practice with auto-next, finishing one board should roll into the next
+  // without asking whether you are ready again.
+  const drill = await open();
+  await drill.eval("window.__zip.setMode('practice'); return 1");
+  await loadPuzzle(drill, 'easy', 1234);
+  await drill.drag(await drill.eval(POINTS));
+  await sleep(2600);                            // past the auto-next delay
+  const next = await drill.eval("return window.__zip.core.snapshot().phase");
+  ok(next !== 'ready', `auto-next stopped to ask again (phase "${next}")`);
+  await drill.close();
 }
 
 // --- the production build must not hand out the answer ----------------------

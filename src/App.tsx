@@ -96,7 +96,10 @@ export default function App() {
         {snap.mode === 'practice'
           ? <Tiers current={snap.difficulty} onPick={name => core.setDifficulty(name)} />
           : <DailyBar snap={snap} onShare={() => core.share()} />}
-        <Board ref={boardRef} regionRef={regionRef} announcerRef={announcerRef} snap={snap} />
+        <Board
+          ref={boardRef} regionRef={regionRef} announcerRef={announcerRef}
+          snap={snap} onStart={() => core.start()}
+        />
         <Controls
           mode={snap.mode}
           onNew={() => core.newPuzzle()}

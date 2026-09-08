@@ -119,7 +119,12 @@ export class BoardView {
 
   // ------------------------------------------------------------ static art
 
-  setPuzzle(puzzle: Puzzle): void {
+  /**
+   * `covered` draws the grid but none of its contents. Blurring the real board
+   * was not enough: the numbers still showed through as blobs, which gave away
+   * their positions — the very study the reveal gate exists to prevent.
+   */
+  setPuzzle(puzzle: Puzzle, covered = false): void {
     this.puzzle = puzzle;
     this.pops = [];
     this.sweep = null;
@@ -159,7 +164,7 @@ export class BoardView {
     // it, so it reads as passing through instead of vanishing behind a disc.
     this.numbers = [];
     const group = node('g', {});
-    puzzle.waypoints.forEach((cell, index) => {
+    (covered ? [] : puzzle.waypoints).forEach((cell, index) => {
       const ring = node('circle', {
         cx: this.cx(cell), cy: this.cy(cell), r: 40, fill: 'none',
         stroke: 'var(--ink)', 'stroke-width': 2.5, opacity: 0
@@ -184,7 +189,7 @@ export class BoardView {
     const walls = node('g', {
       stroke: 'var(--wall)', 'stroke-width': 9, 'stroke-linecap': 'round'
     });
-    for (const [a, b] of puzzle.walls) {
+    for (const [a, b] of (covered ? [] : puzzle.walls)) {
       if (b - a === 1) {
         const x = (b % cols) * U;
         const y = ((a / cols) | 0) * U;

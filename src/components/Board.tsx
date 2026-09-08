@@ -1,11 +1,13 @@
 import type { Ref } from 'react';
 import type { Snapshot } from '../game/core.ts';
+import ReadyGate from './ReadyGate.tsx';
 
 interface Props {
   ref: Ref<SVGSVGElement>;
   regionRef: Ref<HTMLDivElement>;
   announcerRef: Ref<HTMLDivElement>;
   snap: Snapshot;
+  onStart: () => void;
 }
 
 /*
@@ -18,12 +20,13 @@ interface Props {
  * the focusable application region wrapping it, whose label carries the current
  * state, plus a live region that announces each move as it happens.
  */
-export default function Board({ ref, regionRef, announcerRef, snap }: Props) {
+export default function Board({ ref, regionRef, announcerRef, snap, onStart }: Props) {
   const progress = snap.total ? (snap.filled / snap.total) * 100 : 0;
   const label =
     `Zip board, ${snap.rows} by ${snap.cols}. ` +
     `${snap.filled} of ${snap.total} squares filled. ` +
     (snap.solved ? 'Solved.' : `Heading for number ${snap.nextNumber}.`);
+  const hidden = snap.phase !== 'playing';
 
   return (
     <>
@@ -32,12 +35,16 @@ export default function Board({ ref, regionRef, announcerRef, snap }: Props) {
           className="board-region"
           role="application"
           tabIndex={0}
-          aria-label={label}
+          aria-label={hidden ? 'Zip board, not yet revealed. Press Start to begin.' : label}
           aria-describedby="boardHelp"
           ref={regionRef}
         >
-          <svg className={`board${snap.busy ? ' busy' : ''}`} id="board" ref={ref} aria-hidden="true" />
+          <svg
+            className={`board${snap.busy ? ' busy' : ''}${hidden ? ' covered' : ''}`}
+            id="board" ref={ref} aria-hidden="true"
+          />
         </div>
+        <ReadyGate snap={snap} onStart={onStart} />
         <div className={`banner${snap.banner ? ' show' : ''}`} id="banner">
           <b id="bannerText" style={{ color: bannerColour(snap) }}>
             {snap.banner?.text}

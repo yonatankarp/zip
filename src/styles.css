@@ -113,6 +113,31 @@ svg.board.won { animation: boardPop .45s ease-out; }
 @media (prefers-reduced-motion: reduce) { svg.board.won { animation: none; } }
 
 .boardwrap { position: relative; }
+
+/* The board is covered, not absent: the grid's shape stays readable so you can
+   see what you are about to get, but not study it. */
+/* Nothing is drawn inside a covered board, so there is nothing to blur — it is
+   dimmed to read as "not yet", and inert so a stray drag does nothing. */
+svg.board.covered { opacity: .5; pointer-events: none; }
+.gate { position: absolute; inset: 0; display: grid; place-items: center; }
+.gate .start {
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 15px 26px; font-size: 16px; font-weight: 600; border-radius: 14px;
+  box-shadow: var(--shadow); cursor: pointer;
+}
+.gate .start small { font-weight: 400; font-size: 11.5px; opacity: .85; }
+.gate.counting { pointer-events: none; }
+.count {
+  font: 700 76px/1 ui-monospace, "SF Mono", Menlo, monospace;
+  color: var(--ink); font-variant-numeric: tabular-nums;
+  text-shadow: 0 8px 30px rgba(0, 0, 0, .55);
+}
+.count span { display: inline-block; animation: countPop .45s ease-out; }
+@keyframes countPop {
+  from { transform: scale(1.5); opacity: .2; }
+  to { transform: scale(1); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) { .count span { animation: none; } }
 svg.board { width: 100%; height: auto; display: block; touch-action: none; cursor: crosshair; }
 svg.board.busy { opacity: .3; pointer-events: none; }
 .progress { height: 3px; border-radius: 3px; background: var(--line); overflow: hidden; }

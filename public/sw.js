@@ -6,7 +6,7 @@
  * network first so a deploy is picked up promptly, and hashed assets are
  * cache-first because their names change whenever their contents do.
  */
-const CACHE = 'zip-v1';
+const CACHE = 'zip-v2';
 
 self.addEventListener('install', event => {
   event.waitUntil(
@@ -28,10 +28,16 @@ self.addEventListener('fetch', event => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Navigations: network first, so a new deploy is not hidden behind the cache.
+  /*
+   * Navigations: network first, and deliberately bypassing the HTTP cache.
+   * The host serves the shell with max-age=600, so a plain fetch here can hand
+   * back a ten-minute-old page -- long enough to be told about a change and not
+   * see it. The shell is under 3 KB and the assets it names are content-hashed,
+   * so revalidating it on every navigation costs almost nothing.
+   */
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request)
+      fetch(request.url, { cache: 'no-cache' })
         .then(response => {
           const copy = response.clone();
           caches.open(CACHE).then(cache => cache.put('./index.html', copy));

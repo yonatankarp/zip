@@ -25,6 +25,8 @@ export type Theme = 'system' | 'light' | 'dark';
 /** Daily is one shared board per UTC day; practice is the endless generator. */
 export type Mode = 'daily' | 'practice';
 export type ShareOutcome = 'shared' | 'copied' | 'cancelled' | 'failed';
+/** A board is hidden until you say you are ready; the clock starts on reveal. */
+export type Phase = 'ready' | 'counting' | 'playing';
 export type BannerKind = 'good' | 'bad' | 'wait';
 
 export interface Banner {
@@ -51,6 +53,9 @@ export interface Snapshot {
   best: number | null;
   session: { solved: number; total: number; streak: number };
   banner: Banner | null;
+  phase: Phase;
+  /** 3, 2, 1 while counting in; null otherwise. */
+  countdown: number | null;
   /** The number the line is heading for next, for the board's accessible name. */
   nextNumber: number;
   autoNext: boolean;
@@ -97,6 +102,11 @@ export class GameCore {
   private solved = false;
   private revealed = false;
   private hintsUsed = 0;
+  private phase: Phase = 'ready';
+  private countdown: number | null = null;
+  private countdownTimer = 0;
+  /** Set when auto-next brings the next board: no need to ask again. */
+  private autoStart = false;
   /** Single-cell retractions, the way the original counts them. */
   private backtracks = 0;
   private busy = false;
@@ -196,6 +206,7 @@ export class GameCore {
     cancelAnimationFrame(this.frame);
     clearTimeout(this.advanceTimer);
     clearTimeout(this.bannerTimer);
+    clearTimeout(this.countdownTimer);
     for (const off of this.detachers) off();
     this.detachers = [];
     this.listeners.clear();
@@ -283,6 +294,8 @@ export class GameCore {
       best: best === null ? null : Number(best),
       session: { ...this.session },
       banner: this.banner,
+      phase: this.phase,
+      countdown: this.countdown,
       nextNumber: Math.min(this.numbersTaken() + 1, this.puzzle?.waypoints.length ?? 1),
       autoNext: this.autoNext,
       soundMode: this.audio.mode,
@@ -347,7 +360,6 @@ export class GameCore {
   private push(cell: Cell): void {
     this.path.push(cell);
     this.inPath[cell] = 1;
-    this.startClock();
     this.board?.clearHint();
     const number = this.engine!.numAt[cell]!;
     if (number) {
@@ -374,6 +386,7 @@ export class GameCore {
   }
 
   private step(cell: Cell): void {
+    if (this.phase !== 'playing') return;      // nothing to draw on yet
     if (this.solved || this.revealed || !this.engine) return;
     if (!this.path.length) {
       if (this.engine.canStep(this.path, this.inPath, cell)) this.push(cell);
@@ -410,6 +423,45 @@ export class GameCore {
     this.running = true;
     this.timerStarted = true;
     this.startedAt = performance.now() - this.elapsed;
+  }
+
+  /** Reveal with no count-in. Used by tests, which would otherwise pay for it. */
+  revealNow(): void {
+    if (this.phase === 'playing') return;
+    clearTimeout(this.countdownTimer);
+    this.countdown = null;
+    this.phase = 'playing';
+    this.board?.setPuzzle(this.puzzle!);       // now draw what was withheld
+    this.startClock();
+    this.render();
+  }
+
+  /*
+   * Reveal the board and start the clock in the same instant. Studying a board
+   * for free before the timer starts made every recorded time a fiction.
+   */
+  start(): void {
+    if (this.phase !== 'ready' || !this.puzzle) return;
+    this.phase = 'counting';
+    this.countdown = 3;
+    this.markDirty();
+    const tick = () => {
+      this.countdownTimer = window.setTimeout(() => {
+        if (!this.alive) return;
+        if (this.countdown && this.countdown > 1) {
+          this.countdown--;
+          this.markDirty();
+          tick();
+          return;
+        }
+        this.countdown = null;
+        this.phase = 'playing';
+        this.board?.setPuzzle(this.puzzle!);   // now draw what was withheld
+        this.startClock();
+        this.render();
+      }, 650);
+    };
+    tick();
   }
 
   private bestKey(): string { return `zip.best.${this.difficulty}`; }
@@ -476,7 +528,10 @@ export class GameCore {
     }
     // Auto-next belongs to practice: there is only one puzzle a day.
     if (this.autoNext && this.mode === 'practice') {
-      this.advanceTimer = window.setTimeout(() => this.newPuzzle(), AUTO_NEXT_DELAY);
+      this.advanceTimer = window.setTimeout(() => {
+        this.autoStart = true;                 // you already said you were continuing
+        this.newPuzzle();
+      }, AUTO_NEXT_DELAY);
     }
   }
 
@@ -513,11 +568,18 @@ export class GameCore {
     this.revealed = false;
     this.hintsUsed = 0;
     this.backtracks = 0;
+    clearTimeout(this.countdownTimer);
+    this.countdown = null;
+    this.phase = 'ready';
     this.drag = { active: false, at: null, tip: null, settle: null };
     this.fx?.clear();
     this.setBanner(null);
-    this.board?.setPuzzle(puzzle);
+    this.board?.setPuzzle(puzzle, true);       // a new board arrives covered
     this.render();
+    if (this.autoStart) {
+      this.autoStart = false;
+      this.start();
+    }
   }
 
   newPuzzle(): void {
@@ -595,6 +657,8 @@ export class GameCore {
     this.timerStarted = true;
     this.running = true;
     this.startedAt = performance.now() - this.elapsed;
+    this.phase = 'playing';                    // this board has already been seen
+    this.board?.setPuzzle(this.puzzle!);
     this.render();
   }
 
@@ -844,6 +908,11 @@ export class GameCore {
   private onKey(e: KeyboardEvent): void {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     this.audio.markInteracted();
+    if (this.phase === 'ready' && (e.key === ' ' || e.key === 'Enter')) {
+      e.preventDefault();
+      this.start();
+      return;
+    }
     const arrow = ARROWS[e.key];
     if (arrow) {
       // Claiming the arrows unconditionally stopped the page scrolling and
@@ -881,6 +950,8 @@ export class GameCore {
       audio: core.audio,
       generate: generateDifficulty,
       useClock: (fn: () => Date) => core.useClock(fn),
+      start: () => core.start(),
+      reveal: () => core.revealNow(),
       checkRollover: () => core.checkRollover(),
       setMode: (mode: Mode) => core.setMode(mode),
       share: () => core.share(),

@@ -2,6 +2,19 @@
 
 Generated from `src/changelog.ts` by `tools/make-changelog.js` — edit that, not this.
 
+## 1.7.0 — 2026-09-08
+
+The clock starts when you see the board, not when you first move.
+
+### Changed
+
+- A board now arrives covered, with a Start button and a 3-2-1 count-in. The clock starts the instant it is revealed, so studying a puzzle before the timer runs is no longer free. Space or Enter starts it too.
+- A covered board draws nothing but its grid — you can see what size you are getting and no more.
+
+### Fixed
+
+- Updates now show up straight away. The page was being served from a cache for up to ten minutes after a release, which is how the last one appeared to be missing.
+
 ## 1.6.0 — 2026-09-08
 
 The daily is now reproducible for good, and this page exists.

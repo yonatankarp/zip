@@ -25,6 +25,16 @@ export interface Release {
 /** Newest first. */
 export const RELEASES: Release[] = [
   {
+    version: '1.7.0',
+    date: '2026-09-08',
+    summary: 'The clock starts when you see the board, not when you first move.',
+    changes: [
+      { kind: 'changed', text: 'A board now arrives covered, with a Start button and a 3-2-1 count-in. The clock starts the instant it is revealed, so studying a puzzle before the timer runs is no longer free. Space or Enter starts it too.' },
+      { kind: 'changed', text: 'A covered board draws nothing but its grid — you can see what size you are getting and no more.' },
+      { kind: 'fixed', text: 'Updates now show up straight away. The page was being served from a cache for up to ten minutes after a release, which is how the last one appeared to be missing.' }
+    ]
+  },
+  {
     version: '1.6.0',
     date: '2026-09-08',
     summary: 'The daily is now reproducible for good, and this page exists.',
